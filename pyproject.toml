@@ -1,0 +1,48 @@
+[tool.poetry]
+name = "rmqaio"
+version = "0.1.0"
+description = ""
+authors = ["Roman Koshel <roma.koshel@gmail.com>"]
+license = "MIT"
+readme = "README.md"
+keywords = ["rabbitmq"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3 :: Only",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Utilities",
+    "License :: OSI Approved :: MIT License",
+]
+
+[tool.poetry.dependencies]
+python = "^3.10"
+aiormq = ">=6.7.6"
+rich = "*"
+yarl = "*"
+
+[tool.poetry.group.test.dependencies]
+docker = "*"
+httpx = "*"
+pytest = "*"
+pytest_asyncio = "*"
+pytest_timeout = "*"
+
+[tool.poetry.group.docs.dependencies]
+mkdocs = "*"
+mkdocs-material = "*"
+mkdocstrings = {extras = ["python"], version = "*"}
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.black]
+line-length = 120
+
+[tool.isort]
+indent = 4
+lines_after_imports = 2
+lines_between_types = 1
+src_paths = ["."]
+profile = "black"
