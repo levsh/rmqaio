@@ -727,7 +727,7 @@ class Queue:
             timeout=timeout or self.timeout,
         )
 
-        if not (exchange, routing_key) in self.bindings:
+        if (exchange, routing_key) not in self.bindings:
             self.bindings.append((exchange, routing_key))
 
         if restore:
