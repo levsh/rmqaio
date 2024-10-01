@@ -21,6 +21,9 @@ aiormq = ">=6.7.6"
 rich = "*"
 yarl = "*"
 
+[tool.poetry.group.dev.dependencies]
+ruff = "*"
+
 [tool.poetry.group.test.dependencies]
 docker = "*"
 httpx = "*"
