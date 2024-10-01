@@ -95,7 +95,7 @@ def create_ssl_context(url: str, password: str | None = None, cwd: str | None = 
 
     cwd = cwd or os.path.abspath(os.path.dirname(__file__))
 
-    query = yarl.URL(url).query  # pylint: disable=no-member
+    query = yarl.URL(url).query
 
     capath = query.get("capath")
     if capath and not capath.startswith("/"):
