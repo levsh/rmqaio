@@ -1,5 +1,6 @@
 import asyncio
 
+from itertools import repeat
 from unittest import mock
 from urllib.parse import quote_plus
 
@@ -290,3 +291,40 @@ class TestRMQAIO:
         finally:
             await queue.close(delete=True)
             await assert_has_not_queue(api, "test")
+
+    @pytest.mark.asyncio
+    async def test_lost_connection(self, rabbitmq):
+        rmqaio.logger.setLevel("DEBUG")
+        api = httpx.Client(base_url=f"http://{rabbitmq['ip']}:15672", auth=("guest", "guest"))
+
+        conn = rmqaio.Connection(
+            f"amqp://{rabbitmq['ip']}:{rabbitmq['port']}",
+            name="abc",
+            retry_timeouts=repeat(1),
+        )
+
+        try:
+            exchange = rmqaio.Exchange(name="test", conn=conn)
+            await exchange.declare(restore=True)
+
+            queue = rmqaio.Queue(name="test", conn=conn)
+            await queue.declare(restore=True)
+
+            rabbitmq["container"].stop()
+
+            await asyncio.sleep(3)
+
+            rabbitmq["container"].start()
+
+            await asyncio.sleep(5)
+
+            for _ in range(10):
+                if conn.is_open:
+                    break
+                await asyncio.sleep(1)
+                continue
+            else:
+                assert False
+
+        finally:
+            await conn.close()

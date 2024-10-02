@@ -1,6 +1,8 @@
 import logging
 import platform
+import time
 
+import httpx
 import pytest
 
 import rmqaio
@@ -34,11 +36,25 @@ def rabbitmq(container_executor):
         ip, port = "127.0.0.1", 5672
     else:
         ip, port = container.attrs["NetworkSettings"]["IPAddress"], 5672
+
     try:
         utils.wait_socket_available((ip, port), 20)
     except Exception:
         print("\n")
         print(container.logs().decode())
         raise
+
+    api = httpx.Client(base_url=f"http://{ip}:15672", auth=("guest", "guest"))
+
+    for _ in range(20):
+        try:
+            resp = api.get(f"/api/vhosts")
+            if resp.status_code == 200:
+                break
+        except httpx.HTTPError:
+            pass
+        time.sleep(1)
+    else:
+        raise Exception
 
     yield {"container": container, "ip": ip, "port": port}
