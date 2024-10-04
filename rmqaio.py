@@ -195,6 +195,8 @@ class Connection:
         self._open_task: Task | Future = Future()
         self._open_task.set_result(None)
 
+        self._reconnect_task: Task | None = None
+
         self._watcher_task: Task | None = None
         self._watcher_task_started: Event = Event()
 
@@ -337,7 +339,7 @@ class Connection:
             if self._channel:
                 await self._channel.close()
             self._refs -= 1
-            create_task(self.open(retry_timeouts=iter(chain((0, 3), repeat(5)))))
+            self._reconnect_task = create_task(self.open(retry_timeouts=iter(chain((0, 3), repeat(5)))))
             await self._execute_callbacks("on_lost")
 
     async def _connect(
@@ -438,6 +440,12 @@ class Connection:
         if self._watcher_task:
             await self._watcher_task
             self._watcher_task = None
+
+        if self._reconnect_task:
+            try:
+                await self._reconnect_task
+            except Exception:
+                pass
 
         logger.info(_("%s closed"), self)
 

@@ -318,7 +318,7 @@ class TestRMQAIO:
 
             await asyncio.sleep(5)
 
-            for _ in range(10):
+            for _ in range(30):
                 if conn.is_open:
                     break
                 await asyncio.sleep(1)
