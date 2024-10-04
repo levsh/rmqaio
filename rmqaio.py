@@ -1,5 +1,7 @@
 import asyncio
+import gettext
 import importlib.metadata
+import locale
 import logging
 import os
 import ssl
@@ -13,12 +15,22 @@ from functools import partial, wraps
 from inspect import iscoroutine, iscoroutinefunction
 from itertools import chain, repeat
 from ssl import SSLContext
-from typing import Callable, Coroutine, Iterable
+from typing import Any, Callable, Coroutine, Iterable
 from uuid import uuid4
 
 import aiormq
 import aiormq.exceptions
 import yarl
+
+
+lang = gettext.translation(
+    "rmqaio",
+    localedir=os.path.join(os.path.dirname(os.path.abspath(__file__)), "locales"),
+    languages=[locale.getlocale()[0]],
+    fallback=True,
+)
+
+_ = lang.gettext
 
 
 __version__ = importlib.metadata.version("rmqaio")
@@ -77,7 +89,7 @@ def retry(
                         t = next(timeouts)
                         attempt += 1
                         logger.warning(
-                            "%s (%s %s) retry(%s) in %s second(s)",
+                            _("%s (%s %s) retry(%s) in %s second(s)"),
                             msg or fn,
                             e.__class__,
                             e,
@@ -219,7 +231,7 @@ class Connection:
     def __del__(self):
         if getattr(self, "_key", None):
             if self._conn and not self.is_closed:
-                logger.warning("%s unclosed", self)
+                logger.warning(_("%s unclosed"), self)
             shared = self._shared
             shared["objs"] -= 1
             if self in shared:
@@ -245,7 +257,7 @@ class Connection:
 
     async def _execute_callbacks(self, tp: str, reraise: bool | None = None):
         async def fn(name, callback):
-            logger.debug("%s execute callback[tp=%s, name=%s, reraise=%s]", self, tp, name, reraise)
+            logger.debug(_("%s execute callback[tp=%s, name=%s, reraise=%s]"), self, tp, name, reraise)
 
             self._shared[self]["callback_tasks"][tp][name] = current_task()
             try:
@@ -256,7 +268,7 @@ class Connection:
                     if iscoroutine(res):
                         await res
             except Exception as e:
-                logger.exception("%s callback[tp=%s, name=%s, callback=%s] error", self, tp, name, callback)
+                logger.exception(_("%s callback[tp=%s, name=%s, callback=%s] error"), self, tp, name, callback)
                 if reraise:
                     raise e
             finally:
@@ -266,7 +278,7 @@ class Connection:
             await create_task(fn(name, callback))
 
     def set_callback(self, tp: str, name: Hashable, callback: Callable):
-        logger.debug("%s set callback[tp=%s, name=%s, callback=%s]", self, tp, name, callback)
+        logger.debug(_("%s set callback[tp=%s, name=%s, callback=%s]"), self, tp, name, callback)
         if shared := self._shared.get(self):
             if tp not in shared:
                 raise ValueError("invalid callback type")
@@ -321,7 +333,7 @@ class Connection:
         self._watcher_task = None
 
         if not self._closed.done():
-            logger.warning("%s connection lost", self)
+            logger.warning(_("%s connection lost"), self)
             if self._channel:
                 await self._channel.close()
             self._refs -= 1
@@ -344,7 +356,7 @@ class Connection:
             else:
                 connect_timeout = CONNECT_TIMEOUT
             try:
-                logger.info("%s connecting[timeout=%s]...", self, connect_timeout)
+                logger.info(_("%s connecting[timeout=%s]..."), self, connect_timeout)
 
                 async with asyncio.timeout(connect_timeout):
                     if self._retry_timeouts:
@@ -367,7 +379,7 @@ class Connection:
                 logger.warning("%s %s %s", self, e.__class__, e)
                 self.url = url
 
-        logger.info("%s connected", self)
+        logger.info(_("%s connected"), self)
 
     async def open(
         self,
@@ -419,7 +431,7 @@ class Connection:
             if self._conn:
                 await self._conn.close()
                 self._conn = None
-                logger.info("%s close underlying connection", self)
+                logger.info(_("%s close underlying connection"), self)
 
         self.remove_callbacks(cancel=True)
 
@@ -427,7 +439,7 @@ class Connection:
             await self._watcher_task
             self._watcher_task = None
 
-        logger.info("%s closed", self)
+        logger.info(_("%s closed"), self)
 
     @retry(retry_timeouts=[0], exc_filter=lambda e: isinstance(e, aiormq.exceptions.ConnectionClosed))
     async def new_channel(self) -> aiormq.abc.AbstractChannel:
@@ -464,7 +476,7 @@ class SimpleExchange:
             object.__setattr__(self, "conn", self.conn_factory())
 
     async def close(self):
-        logger.debug("%s close", self)
+        logger.debug(_("%s close"), self)
         try:
             if self.conn_factory:
                 self.conn.remove_callbacks(cancel=True)
@@ -491,7 +503,7 @@ class SimpleExchange:
         channel = await self.conn.channel()
 
         logger.debug(
-            "Exchange[name='%s'] channel[%s] publish[routing_key='%s'] %s",
+            _("Exchange[name='%s'] channel[%s] publish[routing_key='%s'] %s"),
             self.name,
             channel,
             routing_key,
@@ -531,7 +543,7 @@ class Exchange:
         if self.conn.is_closed:
             raise Exception("already closed")
 
-        logger.debug("%s close[delete=%s]", self, delete)
+        logger.debug(_("%s close[delete=%s]"), self, delete)
 
         try:
             if self.conn_factory:
@@ -557,7 +569,7 @@ class Exchange:
         if self.name == "":
             return
 
-        logger.debug("%s declare[restore=%s, force=%s]", self, restore, force)
+        logger.debug(_("%s declare[restore=%s, force=%s]"), self, restore, force)
 
         async def fn():
             channel = await self.conn.channel()
@@ -601,7 +613,7 @@ class Exchange:
         channel = await self.conn.channel()
 
         logger.debug(
-            "Exchange[name='%s'] channel[%s] publish[routing_key='%s'] %s",
+            _("Exchange[name='%s'] channel[%s] publish[routing_key='%s'] %s"),
             self.name,
             channel,
             routing_key,
@@ -625,7 +637,7 @@ class Consumer:
     consumer_tag: str
 
     async def close(self):
-        logger.debug("%s close", self)
+        logger.debug(_("%s close"), self)
         await self.channel.close()
 
 
@@ -669,7 +681,7 @@ class Queue:
         if self.conn.is_closed:
             raise Exception("already closed")
 
-        logger.debug("%s close[delete=%s]", self, delete)
+        logger.debug(_("%s close[delete=%s]"), self, delete)
 
         try:
             await self.stop_consume()
@@ -695,11 +707,11 @@ class Queue:
         restore: bool | None = None,
         force: bool | None = None,
     ):
-        logger.debug("%s declare[restore=%s, force=%s]", self, restore, force)
+        logger.debug(_("%s declare[restore=%s, force=%s]"), self, restore, force)
 
         async def fn():
             channel = await self.conn.channel()
-            arguments = {
+            arguments: dict[str, Any] = {
                 "x-queue-type": self.type,
             }
             if self.max_priority:
@@ -746,7 +758,7 @@ class Queue:
         restore: bool | None = None,
     ):
         logger.debug(
-            "Bind queue '%s' to exchange '%s' with routing_key '%s'",
+            _("Bind queue '%s' to exchange '%s' with routing_key '%s'"),
             self.name,
             exchange.name,
             routing_key,
@@ -772,7 +784,7 @@ class Queue:
 
     async def unbind(self, exchange: Exchange, routing_key: str, timeout: int | None = None):
         logger.debug(
-            "Unbind queue '%s' from exchange '%s' for routing_key '%s'",
+            _("Unbind queue '%s' from exchange '%s' for routing_key '%s'"),
             self.name,
             exchange.name,
             routing_key,
@@ -797,7 +809,7 @@ class Queue:
 
     async def consume(
         self,
-        callback: Callable[[aiormq.Channel, aiormq.abc.DeliveredMessage], Coroutine],
+        callback: Callable[[aiormq.abc.AbstractChannel, aiormq.abc.DeliveredMessage], Coroutine],
         prefetch_count: int | None = None,
         timeout: int | None = None,
         retry_timeout: int = 5,
@@ -814,7 +826,7 @@ class Queue:
                 "consumer",
                 Consumer(
                     channel=channel,
-                    consumer_tag=(
+                    consumer_tag=(  # type: ignore
                         await channel.basic_consume(
                             self.name,
                             partial(callback, channel),
@@ -824,7 +836,7 @@ class Queue:
                 ),
             )
 
-            logger.info("%s consuming", self)
+            logger.info(_("%s consuming"), self)
 
             self.conn.set_callback(
                 "on_lost",
@@ -843,7 +855,7 @@ class Queue:
         return self.consumer
 
     async def stop_consume(self, timeout: int | None = None):
-        logger.debug("%s stop consuming", self)
+        logger.debug(_("%s stop consuming"), self)
 
         self.conn.remove_callback("on_lost", f"on_lost_queue_{self.name}_consume", cancel=True)
 
