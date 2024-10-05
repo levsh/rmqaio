@@ -23,14 +23,12 @@ import aiormq.exceptions
 import yarl
 
 
-lang = gettext.translation(
+_ = gettext.translation(
     "rmqaio",
     localedir=os.path.join(os.path.dirname(os.path.abspath(__file__)), "locales"),
     languages=[locale.getlocale()[0]],
     fallback=True,
-)
-
-_ = lang.gettext
+).gettext
 
 
 __version__ = importlib.metadata.version("rmqaio")
