@@ -1,7 +1,6 @@
 import asyncio
 import gettext
 import importlib.metadata
-import locale
 import logging
 import os
 import ssl
@@ -23,12 +22,12 @@ import aiormq.exceptions
 import yarl
 
 
-_ = gettext.translation(
+gettext.bindtextdomain(
     "rmqaio",
     localedir=os.path.join(os.path.dirname(os.path.abspath(__file__)), "locales"),
-    languages=[locale.getlocale()[0]],
-    fallback=True,
-).gettext
+)
+gettext.textdomain("rmqaio")
+_ = gettext.gettext
 
 
 __version__ = importlib.metadata.version("rmqaio")
