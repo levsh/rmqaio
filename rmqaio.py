@@ -42,7 +42,10 @@ log_hndl.setFormatter(log_frmt)
 logger.addHandler(log_hndl)
 
 CONNECT_TIMEOUT = 15
+"""Connection establishment operation timeout."""
+
 LOG_SANITIZE = True
+"""Logger data sanitize flag. If `True` user data will be replaces with `<hidden>` message."""
 
 BasicProperties = aiormq.spec.Basic.Properties
 
@@ -602,7 +605,7 @@ class SimpleExchange:
             self.name,
             channel,
             routing_key,
-            data if not LOG_SANITIZE else "<hiden>",
+            data if not LOG_SANITIZE else "<hidden>",
         )
 
         await channel.basic_publish(
@@ -753,7 +756,7 @@ class Exchange:
             self.name,
             channel,
             routing_key,
-            data if not LOG_SANITIZE else "<hiden>",
+            data if not LOG_SANITIZE else "<hidden>",
         )
 
         await channel.basic_publish(
