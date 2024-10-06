@@ -48,11 +48,39 @@ LOG_SANITIZE = True
 BasicProperties = aiormq.spec.Basic.Properties
 
 
+class ExchangeType(StrEnum):
+    """Enum for RabbitMQ exchange types."""
+
+    DIRECT = "direct"
+    """
+    RabbitMQ [direct](https://www.rabbitmq.com/tutorials/amqp-concepts#exchange-direct) exchange.
+    """
+    FANOUT = "fanout"
+    """
+    RabbitMQ [fanout](https://www.rabbitmq.com/tutorials/amqp-concepts#exchange-fanout) exchange.
+    """
+    TOPIC = "topic"
+    """
+    RabbitMQ [topic](https://www.rabbitmq.com/tutorials/amqp-concepts#exchange-topic) exchange.
+    """
+    HEADERS = "HEADERS"
+    """
+    RabbitMQ [headers](https://www.rabbitmq.com/tutorials/amqp-concepts#exchange-headers) exchange.
+    """
+
+
 class QueueType(StrEnum):
-    """RabbitMQ queue type"""
+    """Enum for RabbitMQ queue types"""
 
     CLASSIC = "classic"
+    """
+    RabbitMQ [classic](https://www.rabbitmq.com/docs/classic-queues) queue.
+    """
+
     QUORUM = "quorum"
+    """
+    RabbitMQ [quorum](https://www.rabbitmq.com/docs/quorum-queues) queue.
+    """
 
 
 def retry(
@@ -65,11 +93,10 @@ def retry(
     """Retry decorator.
 
     Args:
-        retry_timeouts: Retry timeout as list of int, for example: `[1, 2, 3]` or `itertools.repeat(5)`.
+        retry_timeouts: Retry timeout as iterable of int, for example: `[1, 2, 3]` or `itertools.repeat(5)`.
         exc_filter: Callable to determine whether or not to retry.
         msg: Message to log on retry.
         on_error: Callable to call on error.
-        reraise: Reraise exception or not.
     """
 
     def decorator(fn):
@@ -105,8 +132,12 @@ def retry(
     return decorator
 
 
-def create_ssl_context(url: str, password: str | None = None, cwd: str | None = None) -> SSLContext | None:
-    """Create ssl context from url."""
+def create_ssl_context(
+    url: str,
+    password: str | None = None,
+    cwd: str | None = None,
+) -> SSLContext | None:
+    """Create ssl context from URL."""
 
     if not url.startswith("amqps://"):
         return
@@ -143,7 +174,21 @@ def create_ssl_context(url: str, password: str | None = None, cwd: str | None = 
 
 
 class LoopIter:
-    """Infinity iterator class."""
+    """Infinity iterator.
+
+    Args:
+        data: list of items to iterate.
+
+    Examples:
+        >>> loop_iter = LoopIter([1, 2])
+        >>> next(loop_iter)
+        1
+        >>> next(loop_iter)
+        2
+        >>> next(loop_ipter)
+        1
+        ...
+    """
 
     __slots__ = ("_data", "_i", "_j", "_iter")
 
@@ -166,7 +211,24 @@ class LoopIter:
 
 
 class Connection:
-    """RabbitMQ connection."""
+    """RabbitMQ smart connection. Single `aiormq` connection per event loop, url(s) and name.
+
+    Args:
+        url: RabbitMQ URL or `list` of URLs. See [uri-spec](https://www.rabbitmq.com/docs/uri-spec).
+        name: Connection name. Will be generated automatically if not provided as `uuid4().hex[-4:]`.
+        retry_timeouts: Iterable of `int`.
+        exc_filter: Callable to filter exceptions for retry.
+
+            Default:
+                ```python
+                lambda e: isinstance(
+                    e, (asyncio.TimeoutError, ConnectionError, aiormq.exceptions.AMQPConnectionError)
+                )
+                ```
+
+    Examples:
+        >>> Connection("amqp://guest:guest@localhost", name="abc", retry_timeouts=itertools.repeat(5))
+    """
 
     __shared: dict = {}
 
@@ -316,10 +378,14 @@ class Connection:
 
     @property
     def is_open(self) -> bool:
+        """Returns is connection openned."""
+
         return self._watcher_task is not None and not (self.is_closed or self._conn is None or self._conn.is_closed)
 
     @property
     def is_closed(self) -> bool:
+        """Returns is connection closed."""
+
         return self._closed.done()
 
     async def _watcher(self):
@@ -412,7 +478,7 @@ class Connection:
                     raise e
 
     async def close(self):
-        """Close connection"""
+        """Close connection."""
 
         if self.is_closed:
             return
@@ -449,13 +515,13 @@ class Connection:
 
     @retry(retry_timeouts=[0], exc_filter=lambda e: isinstance(e, aiormq.exceptions.ConnectionClosed))
     async def new_channel(self) -> aiormq.abc.AbstractChannel:
-        """Create new channel"""
+        """Create new channel."""
 
         await self.open()
         return await self._conn.channel()
 
     async def channel(self) -> aiormq.abc.AbstractChannel:
-        """Get or create channel"""
+        """Get channel. A new channel will be created if one does not exist."""
 
         if self._channel is None or self._channel.is_closed:
             await self.open()
@@ -466,12 +532,33 @@ class Connection:
 
 @dataclass(slots=True, frozen=True)
 class SimpleExchange:
-    """Simple exchange. Only publish method allowed."""
+    """
+    Simple exchange. Declaration not allowed.
+    May be used as RabbitMQ [default exchange](https://www.rabbitmq.com/tutorials/amqp-concepts#exchange-default)
+    or foreign exchange.
+
+    Args:
+        name: Exchange name.
+        timeout: Default timeout for network operations.
+        conn: `rmqaio.Connection` instance.
+        conn_factory: `rmqaio.Connection` instance factroy.
+
+    Warning:
+        One of the paramaters `conn` or `conn_factory` is required.
+
+    Examples:
+        >>> SimpleExchange(conn_factory=lambda: Connection("amqp://localhost"))
+
+        Or
+
+        >>> conn = Connection("amqp://localhost")
+        >>> SimpleExchange(conn=conn)
+    """
 
     name: str = ""
     timeout: int | None = None
     conn: Connection = None  # type: ignore
-    conn_factory: Callable = field(default=None, repr=False)  # type: ignore
+    conn_factory: Callable[[], Connection] = field(default=None, repr=False)  # type: ignore
 
     def __post_init__(self):
         if all((self.conn, self.conn_factory)):
@@ -482,6 +569,8 @@ class SimpleExchange:
             object.__setattr__(self, "conn", self.conn_factory())
 
     async def close(self):
+        """Close exchange."""
+
         logger.debug(_("%s close"), self)
         try:
             if self.conn_factory:
@@ -498,12 +587,13 @@ class SimpleExchange:
         timeout: int | None = None,
     ):
         """
-        Publish data to exchange with routing key
+        Publish data to exchange.
+
         Args:
-            data: data to publish.
-            routing_key: routing key.
+            data: Data to publish.
+            routing_key: Routing key.
             properties: RabbitMQ message properties.
-            timeout: publish operation timeout.
+            timeout: Operation timeout. If `None` `self.timeout` will be used.
         """
 
         channel = await self.conn.channel()
@@ -527,15 +617,29 @@ class SimpleExchange:
 
 @dataclass(slots=True, frozen=True)
 class Exchange:
-    """RabbitMQ exchange class."""
+    """
+    RabbitMQ exchange.
+
+    Args:
+        name: Exchange name.
+        type: RabbitMQ exchange [type](https://www.rabbitmq.com/tutorials/amqp-concepts#exchanges).
+        durable: Durable or transient exchange.
+        auto_delete: Exchange auto-delete parameter.
+        timeout: Default timeout for network operations.
+        conn: `rmqaio.Connection` instance.
+        conn_factory: `rmqaio.Connection` instance factroy.
+
+    Warning:
+        One of the paramaters `conn` or `conn_factory` is required.
+    """
 
     name: str = ""
-    type: str = "direct"
+    type: ExchangeType = ExchangeType.DIRECT
     durable: bool = False
     auto_delete: bool = False
     timeout: int | None = None
     conn: Connection = None  # type: ignore
-    conn_factory: Callable = field(default=None, repr=False)  # type: ignore
+    conn_factory: Callable[[], Connection] = field(default=None, repr=False)  # type: ignore
 
     def __post_init__(self):
         if all((self.conn, self.conn_factory)):
@@ -546,6 +650,14 @@ class Exchange:
             object.__setattr__(self, "conn", self.conn_factory())
 
     async def close(self, delete: bool | None = None, timeout: int | None = None):
+        """
+        Close exchange.
+
+        Args:
+            delete: Delete exchnage on close.
+            timeout: Operation timeout. If `None` `self.timeout` will be used.
+        """
+
         if self.conn.is_closed:
             raise Exception("already closed")
 
@@ -572,6 +684,15 @@ class Exchange:
         restore: bool | None = None,
         force: bool | None = None,
     ):
+        """
+        Declare exchange.
+
+        Args:
+            timeout: Operation timeout. If `None` `self.timeout` will be used.
+            restore: Restore exchange on connection issue.
+            force: Force redeclare exchange if it has already been declared with different parameters.
+        """
+
         if self.name == "":
             return
 
@@ -616,6 +737,16 @@ class Exchange:
         properties: dict | None = None,
         timeout: int | None = None,
     ):
+        """
+        Publish data to exchange.
+
+        Args:
+            data: Data to publish.
+            routing_key: Routing key.
+            properties: RabbitMQ message properties.
+            timeout: Operation timeout. If `None` `self.timeout` will be used.
+        """
+
         channel = await self.conn.channel()
 
         logger.debug(
@@ -637,19 +768,45 @@ class Exchange:
 
 @dataclass(slots=True, frozen=True)
 class Consumer:
-    """Consumer class."""
+    """
+    Class to store Consumer data.
+
+    Attributes:
+        channel: Consumer channel.
+        consumer_tag: Consumer tag.
+    """
 
     channel: aiormq.abc.AbstractChannel
     consumer_tag: str
 
     async def close(self):
+        """Close consumer channel."""
+
         logger.debug(_("%s close"), self)
         await self.channel.close()
 
 
 @dataclass(slots=True, frozen=True)
 class Queue:
-    """RabbitMQ queue class."""
+    """
+    RabbitMQ queue.
+
+    Args:
+        name: Queue name.
+        type: Queue [type](https://www.rabbitmq.com/docs/queues#distributed).
+        durable: Queue durable [option](https://www.rabbitmq.com/docs/queues#durability).
+        auto_delete: Queue auto-delete option.
+        prefetch_count: RabbitMQ channel [prefecth count](https://www.rabbitmq.com/docs/confirms#channel-qos-prefetch).
+        max_priority: Max [priority](https://www.rabbitmq.com/docs/priority) for `QueueType.CLASSIC` queue.
+        expires: In seconds. Used for [`x-expires`](https://www.rabbitmq.com/docs/ttl#queue-ttl) option.
+        msg_ttl: Message TTL in seconds. Used fo [`message-ttl`](https://www.rabbitmq.com/docs/ttl#per-queue-message-ttl) option.
+        timeout: Default timeout for network operations.
+        conn: `rmqaio.Connection` instance.
+        conn_factory: `rmqaio.Connection` instance factroy.
+
+    Warning:
+        One of the paramaters `conn` or `conn_factory` is required.
+    """
 
     name: str
     type: QueueType = QueueType.CLASSIC
@@ -661,7 +818,7 @@ class Queue:
     msg_ttl: int | None = None
     timeout: int | None = None
     conn: Connection = None  # type: ignore
-    conn_factory: Callable = field(default=None, repr=False)  # type: ignore
+    conn_factory: Callable[[], Connection] = field(default=None, repr=False)  # type: ignore
     consumer: Consumer | None = field(default=None, init=False)
     bindings: list[tuple[Exchange, str]] = field(default_factory=list, init=False)
 
@@ -684,6 +841,14 @@ class Queue:
         )
 
     async def close(self, delete: bool | None = None, timeout: int | None = None):
+        """
+        Close queue.
+
+        Args:
+            delete: Delete queue on close.
+            timeout: Operation timeout. If `None` `self.timeout` will be used.
+        """
+
         if self.conn.is_closed:
             raise Exception("already closed")
 
@@ -713,6 +878,15 @@ class Queue:
         restore: bool | None = None,
         force: bool | None = None,
     ):
+        """
+        Declare queue.
+
+        Args:
+            timeout: Operation timeout. If `None` `self.timeout` will be used.
+            restore: Restore this binding on connection issue.
+            force: Force redeclare queue if it has already been declared with different parameters.
+        """
+
         logger.debug(_("%s declare[restore=%s, force=%s]"), self, restore, force)
 
         async def fn():
@@ -763,6 +937,16 @@ class Queue:
         timeout: int | None = None,
         restore: bool | None = None,
     ):
+        """
+        Bind queue to exchange.
+
+        Args:
+            exchange: RabbitMQ exchange to bind.
+            routing_key: Routing key to bind.
+            timeout: Operation timeout. If `None` `self.timeout` will be used.
+            restore: Restore this binding on connection issue.
+        """
+
         logger.debug(
             _("Bind queue '%s' to exchange '%s' with routing_key '%s'"),
             self.name,
@@ -789,6 +973,15 @@ class Queue:
             )
 
     async def unbind(self, exchange: Exchange, routing_key: str, timeout: int | None = None):
+        """
+        Unbind queue.
+
+        Args:
+            exchange: Echange to unbind from.
+            routing_key: Routing key to unbind.
+            timeout: Operation timeout. If `None` `self.timeout` will be used.
+        """
+
         logger.debug(
             _("Unbind queue '%s' from exchange '%s' for routing_key '%s'"),
             self.name,
@@ -820,6 +1013,17 @@ class Queue:
         timeout: int | None = None,
         retry_timeout: int = 5,
     ):
+        """
+        Consume queue.
+
+        Args:
+            callback: Async callback to call on incoming `aiormq.abc.DeliveredMessage`.
+            prefetch_count: RabbitMQ channel [prefecth count](https://www.rabbitmq.com/docs/confirms#channel-qos-prefetch).
+                If `None` `self.prefetch_count` will be used.
+            timeout: Operation timeout. If `None` `self.timeout` will be used.
+            retry_timeout: Timeout for retry. Used as argument for `itertools.repeat` function.
+        """
+
         if self.consumer is None:
             channel = await self.conn.new_channel()
             await channel.basic_qos(
@@ -861,6 +1065,13 @@ class Queue:
         return self.consumer
 
     async def stop_consume(self, timeout: int | None = None):
+        """
+        Stop consume queue.
+
+        Args:
+            timeout: Operation timeout. If `None` `self.timeout` will be used.
+        """
+
         logger.debug(_("%s stop consuming"), self)
 
         self.conn.remove_callback("on_lost", f"on_lost_queue_{self.name}_consume", cancel=True)

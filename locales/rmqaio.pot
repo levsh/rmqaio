@@ -5,7 +5,7 @@
 msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
-"POT-Creation-Date: 2024-10-05 09:01+0300\n"
+"POT-Creation-Date: 2024-10-06 10:38+0300\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -15,75 +15,75 @@ msgstr ""
 "Generated-By: pygettext.py 1.5\n"
 
 
-#: ../rmqaio.py:90
+#: ../rmqaio.py:117
 msgid "%s (%s %s) retry(%s) in %s second(s)"
 msgstr ""
 
-#: ../rmqaio.py:234
+#: ../rmqaio.py:296
 msgid "%s unclosed"
 msgstr ""
 
-#: ../rmqaio.py:260
+#: ../rmqaio.py:322
 msgid "%s execute callback[tp=%s, name=%s, reraise=%s]"
 msgstr ""
 
-#: ../rmqaio.py:271
+#: ../rmqaio.py:333
 msgid "%s callback[tp=%s, name=%s, callback=%s] error"
 msgstr ""
 
-#: ../rmqaio.py:281
+#: ../rmqaio.py:343
 msgid "%s set callback[tp=%s, name=%s, callback=%s]"
 msgstr ""
 
-#: ../rmqaio.py:336
+#: ../rmqaio.py:402
 msgid "%s connection lost"
 msgstr ""
 
-#: ../rmqaio.py:359
+#: ../rmqaio.py:425
 msgid "%s connecting[timeout=%s]..."
 msgstr ""
 
-#: ../rmqaio.py:382
+#: ../rmqaio.py:448
 msgid "%s connected"
 msgstr ""
 
-#: ../rmqaio.py:434
+#: ../rmqaio.py:500
 msgid "%s close underlying connection"
 msgstr ""
 
-#: ../rmqaio.py:448
+#: ../rmqaio.py:514
 msgid "%s closed"
 msgstr ""
 
-#: ../rmqaio.py:485 ../rmqaio.py:646
+#: ../rmqaio.py:574 ../rmqaio.py:785
 msgid "%s close"
 msgstr ""
 
-#: ../rmqaio.py:512 ../rmqaio.py:622
+#: ../rmqaio.py:602 ../rmqaio.py:753
 msgid "Exchange[name='%s'] channel[%s] publish[routing_key='%s'] %s"
 msgstr ""
 
-#: ../rmqaio.py:552 ../rmqaio.py:690
+#: ../rmqaio.py:664 ../rmqaio.py:855
 msgid "%s close[delete=%s]"
 msgstr ""
 
-#: ../rmqaio.py:578 ../rmqaio.py:716
+#: ../rmqaio.py:699 ../rmqaio.py:890
 msgid "%s declare[restore=%s, force=%s]"
 msgstr ""
 
-#: ../rmqaio.py:767
+#: ../rmqaio.py:951
 msgid "Bind queue '%s' to exchange '%s' with routing_key '%s'"
 msgstr ""
 
-#: ../rmqaio.py:793
+#: ../rmqaio.py:986
 msgid "Unbind queue '%s' from exchange '%s' for routing_key '%s'"
 msgstr ""
 
-#: ../rmqaio.py:845
+#: ../rmqaio.py:1049
 msgid "%s consuming"
 msgstr ""
 
-#: ../rmqaio.py:864
+#: ../rmqaio.py:1075
 msgid "%s stop consuming"
 msgstr ""
 

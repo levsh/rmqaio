@@ -33,6 +33,7 @@ pytest_asyncio = "*"
 pytest_timeout = "*"
 
 [tool.poetry.group.docs.dependencies]
+black = "*"
 mkdocs = "*"
 mkdocs-material = "*"
 mkdocstrings = {extras = ["python"], version = "*"}

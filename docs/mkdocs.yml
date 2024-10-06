@@ -1,0 +1,40 @@
+site_name: RMQaio
+
+nav:
+  - Руководство пользователя: index.md
+  - API справочник: api_reference.md
+
+theme:
+  language: ru
+  name: material
+  palette:
+    scheme: slate
+    primary: teal
+    accent: light blue
+  features:
+    - content.code.copy
+
+markdown_extensions:
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences
+  - pymdownx.details
+  - tables
+  - admonition
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          options:
+            docstring_section_style: list
+            separate_signature: true
+            line_length: 60
+
+extra_css:
+  - css/extra.css
+
+repo_url: https://github.com/levsh/rmqaio
