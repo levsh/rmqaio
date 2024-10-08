@@ -546,7 +546,7 @@ class SimpleExchange:
         conn_factory: `rmqaio.Connection` instance factroy.
 
     Warning:
-        One of the paramaters `conn` or `conn_factory` is required.
+        One of the parameters `conn` or `conn_factory` is required.
 
     Examples:
         >>> SimpleExchange(conn_factory=lambda: Connection("amqp://localhost"))
@@ -632,7 +632,7 @@ class Exchange:
         conn_factory: `rmqaio.Connection` instance factroy.
 
     Warning:
-        One of the paramaters `conn` or `conn_factory` is required.
+        One of the parameters `conn` or `conn_factory` is required.
     """
 
     name: str = ""
@@ -808,7 +808,7 @@ class Queue:
         conn_factory: `rmqaio.Connection` instance factroy.
 
     Warning:
-        One of the paramaters `conn` or `conn_factory` is required.
+        One of the parameters `conn` or `conn_factory` is required.
     """
 
     name: str
