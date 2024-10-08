@@ -797,6 +797,7 @@ class Queue:
         name: Queue name.
         type: Queue [type](https://www.rabbitmq.com/docs/queues#distributed).
         durable: Queue durable [option](https://www.rabbitmq.com/docs/queues#durability).
+        exclusive: Queue exclusive [option](https://www.rabbitmq.com/docs/queues#exclusive-queues).
         auto_delete: Queue auto-delete option.
         prefetch_count: RabbitMQ channel [prefecth count](https://www.rabbitmq.com/docs/confirms#channel-qos-prefetch).
         max_priority: Max [priority](https://www.rabbitmq.com/docs/priority) for `QueueType.CLASSIC` queue.
@@ -813,6 +814,7 @@ class Queue:
     name: str
     type: QueueType = QueueType.CLASSIC
     durable: bool = False
+    exclusive: bool = False
     auto_delete: bool = False
     prefetch_count: int | None = 1
     max_priority: int | None = None
@@ -905,6 +907,7 @@ class Queue:
             await channel.queue_declare(
                 self.name,
                 durable=self.durable,
+                exclusive=self.exclusive,
                 auto_delete=self.auto_delete,
                 arguments=arguments,
                 timeout=timeout or self.timeout,
