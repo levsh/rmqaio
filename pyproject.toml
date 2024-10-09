@@ -14,7 +14,7 @@ classifiers = [
     "Topic :: Utilities",
     "License :: OSI Approved :: MIT License",
 ]
-include = [{path = "locales"}]
+packages = [{include = "rmqaio"}]
 
 [tool.poetry.dependencies]
 python = "^3.10"

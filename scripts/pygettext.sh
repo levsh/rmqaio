@@ -2,4 +2,4 @@
 
 cd "$(dirname "$0")"
 
-python pygettext.py -d rmqaio -o ../locales/rmqaio.pot ../rmqaio.py
+python pygettext.py -d rmqaio -o ../rmqaio/locales/rmqaio.pot ../rmqaio

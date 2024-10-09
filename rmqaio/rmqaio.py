@@ -1,6 +1,5 @@
 import asyncio
 import gettext
-import importlib.metadata
 import logging
 import os
 import ssl
@@ -30,9 +29,6 @@ gettext.textdomain("rmqaio")
 _ = gettext.gettext
 
 
-__version__ = importlib.metadata.version("rmqaio")
-
-
 logger = logging.getLogger("rmqaio")
 
 log_frmt = logging.Formatter("%(asctime)s %(levelname)-8s %(name)s lineno:%(lineno)4d -- %(message)s")
@@ -40,6 +36,7 @@ log_hndl = logging.StreamHandler(stream=sys.stderr)
 log_hndl.setFormatter(log_frmt)
 
 logger.addHandler(log_hndl)
+
 
 CONNECT_TIMEOUT = 15
 """Connection establishment operation timeout."""
