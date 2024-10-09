@@ -2,7 +2,6 @@ import asyncio
 import gettext
 import logging
 import os
-import ssl
 import sys
 
 from asyncio import FIRST_COMPLETED, Event, Future, Lock, Task, create_task, current_task, get_event_loop, sleep, wait
@@ -82,7 +81,7 @@ class QueueType(StrEnum):
     """
 
 
-def retry(
+def _retry(
     *,
     retry_timeouts: Iterable[int],
     exc_filter: Callable[[Exception], bool],
@@ -131,55 +130,14 @@ def retry(
     return decorator
 
 
-def create_ssl_context(
-    url: str,
-    password: str | None = None,
-    cwd: str | None = None,
-) -> SSLContext | None:
-    """Create ssl context from URL."""
-
-    if not url.startswith("amqps://"):
-        return
-
-    cwd = cwd or os.path.abspath(os.path.dirname(__file__))
-
-    query = yarl.URL(url).query
-
-    capath = query.get("capath")
-    if capath and not capath.startswith("/"):
-        capath = os.path.join(cwd, capath)
-
-    cafile = query.get("cafile")
-    if cafile and not cafile.startswith("/"):
-        cafile = os.path.join(cwd, cafile)
-
-    context = ssl.create_default_context(ssl.Purpose.SERVER_AUTH, capath=capath, cafile=cafile)
-
-    cert = query.get("certfile")
-    if cert:
-        if not cert.startswith("/"):
-            cert = os.path.join(cwd, cert)
-        keyfile = query.get("keyfile")
-        if keyfile and not keyfile.startswith("/"):
-            keyfile = os.path.join(cwd, keyfile)
-        context.load_cert_chain(cert, keyfile=keyfile, password=password)
-
-    verify = query.get("no_verify_ssl", "0") == "0"
-    if not verify:
-        context.check_hostname = False
-        context.verify_mode = ssl.CERT_NONE
-
-    return context
-
-
-class LoopIter:
+class _LoopIter:
     """Infinity iterator.
 
     Args:
         data: list of items to iterate.
 
     Examples:
-        >>> loop_iter = LoopIter([1, 2])
+        >>> loop_iter = _LoopIter([1, 2])
         >>> next(loop_iter)
         1
         >>> next(loop_iter)
@@ -215,6 +173,7 @@ class Connection:
     Args:
         url: RabbitMQ URL or `list` of URLs. See [uri-spec](https://www.rabbitmq.com/docs/uri-spec).
         name: Connection name. Will be generated automatically if not provided as `uuid4().hex[-4:]`.
+        ssl_context: SSL context or `list` of SSL contexts according to provided `url` argument.
         retry_timeouts: Iterable of `int`.
         exc_filter: Callable to filter exceptions for retry.
 
@@ -226,7 +185,16 @@ class Connection:
                 ```
 
     Examples:
+        ```python
         >>> Connection("amqp://guest:guest@localhost", name="abc", retry_timeouts=itertools.repeat(5))
+        ```
+
+        ```python
+        >>> Connection(
+                ["amqps://localhost1", "amqps://localhost2"],
+                ssl_context=[ssl_context_for_url1, ssl_context_for_url2],
+            )
+        ```
     """
 
     __shared: dict = {}
@@ -235,6 +203,7 @@ class Connection:
         self,
         url: str | list[str],
         name: str | None = None,
+        ssl_context: SSLContext | list[SSLContext] | None = None,
         retry_timeouts: Iterable[int] | None = None,
         exc_filter: Callable[[Exception], bool] | None = None,
     ):
@@ -243,13 +212,21 @@ class Connection:
         else:
             self.urls = list(url)
 
-        self._urls_iter = LoopIter(self.urls)
+        self._urls_iter = _LoopIter(self.urls)
+
+        if not isinstance(ssl_context, (list, tuple, set)):
+            ssl_contexts = [ssl_context]
+        else:
+            ssl_contexts = list(ssl_context)
+        if ssl_context and len(self.urls) != len(ssl_contexts):
+            raise Exception(_("len(url) not match len(ssl_context)"))
+        self._ssl_contexts_iter = _LoopIter(ssl_contexts)
 
         self.url = next(self._urls_iter)
 
-        self.name = name or uuid4().hex[-4:]
+        self.ssl_context = next(self._ssl_contexts_iter)
 
-        self._ssl_contexts = {url: create_ssl_context(url, cwd=os.path.abspath("~")) for url in self.urls}
+        self.name = name or uuid4().hex[-4:]
 
         self._open_task: Task | Future = Future()
         self._open_task.set_result(None)
@@ -425,24 +402,27 @@ class Connection:
 
                 async with asyncio.timeout(connect_timeout):
                     if self._retry_timeouts:
-                        self._conn = await retry(
+                        self._conn = await _retry(
                             retry_timeouts=retry_timeouts,
                             exc_filter=exc_filter,
                         )(aiormq.connect)(
                             self.url,
-                            context=self._ssl_contexts[self.url],
+                            context=self.ssl_context,
                         )
                     else:
-                        self._conn = await aiormq.connect(self.url, context=self._ssl_contexts[self.url])
+                        self._conn = await aiormq.connect(self.url, context=self.ssl_context)
                 self._urls_iter.reset()
+                self._ssl_contexts_iter.reset()
                 break
             except (asyncio.TimeoutError, ConnectionError, aiormq.exceptions.ConnectionClosed) as e:
                 try:
                     url = next(self._urls_iter)
+                    ssl_context = next(self._ssl_contexts_iter)
                 except StopIteration:
                     raise e
                 logger.warning("%s %s %s", self, e.__class__, e)
                 self.url = url
+                self.ssl_context = ssl_context
 
         logger.info(_("%s connected"), self)
 
@@ -512,7 +492,7 @@ class Connection:
 
         logger.info(_("%s closed"), self)
 
-    @retry(retry_timeouts=[0], exc_filter=lambda e: isinstance(e, aiormq.exceptions.ConnectionClosed))
+    @_retry(retry_timeouts=[0], exc_filter=lambda e: isinstance(e, aiormq.exceptions.ConnectionClosed))
     async def new_channel(self) -> aiormq.abc.AbstractChannel:
         """Create new channel."""
 
@@ -570,7 +550,7 @@ class SimpleExchange:
     async def close(self):
         """Close exchange."""
 
-        logger.debug(_("%s close"), self)
+        logger.debug(_("close %s"), self)
         try:
             if self.conn_factory:
                 self.conn.remove_callbacks(cancel=True)
@@ -598,7 +578,7 @@ class SimpleExchange:
         channel = await self.conn.channel()
 
         logger.debug(
-            _("Exchange[name='%s'] channel[%s] publish[routing_key='%s'] %s"),
+            _("exchange[name='%s'] channel[%s] publish[routing_key='%s'] %s"),
             self.name,
             channel,
             routing_key,
@@ -660,7 +640,7 @@ class Exchange:
         if self.conn.is_closed:
             raise Exception("already closed")
 
-        logger.debug(_("%s close[delete=%s]"), self, delete)
+        logger.debug(_("close[delete=%s] %s"), delete, self)
 
         try:
             if self.conn_factory:
@@ -695,7 +675,7 @@ class Exchange:
         if self.name == "":
             return
 
-        logger.debug(_("%s declare[restore=%s, force=%s]"), self, restore, force)
+        logger.debug(_("declare[restore=%s, force=%s] %s"), restore, force, self)
 
         async def fn():
             channel = await self.conn.channel()
@@ -713,7 +693,7 @@ class Exchange:
                 channel = await self.conn.channel()
                 await channel.exchange_delete(self.name)
 
-            await retry(
+            await _retry(
                 retry_timeouts=[0],
                 exc_filter=lambda e: isinstance(e, aiormq.ChannelPreconditionFailed),
                 on_error=on_error,
@@ -749,7 +729,7 @@ class Exchange:
         channel = await self.conn.channel()
 
         logger.debug(
-            _("Exchange[name='%s'] channel[%s] publish[routing_key='%s'] %s"),
+            _("exchange[name='%s'] channel[%s] publish[routing_key='%s'] %s"),
             self.name,
             channel,
             routing_key,
@@ -781,7 +761,7 @@ class Consumer:
     async def close(self):
         """Close consumer channel."""
 
-        logger.debug(_("%s close"), self)
+        logger.debug(_("close %s"), self)
         await self.channel.close()
 
 
@@ -853,7 +833,7 @@ class Queue:
         if self.conn.is_closed:
             raise Exception("already closed")
 
-        logger.debug(_("%s close[delete=%s]"), self, delete)
+        logger.debug(_("close[delete=%s] %s"), delete, self)
 
         try:
             await self.stop_consume()
@@ -888,7 +868,7 @@ class Queue:
             force: Force redeclare queue if it has already been declared with different parameters.
         """
 
-        logger.debug(_("%s declare[restore=%s, force=%s]"), self, restore, force)
+        logger.debug(_("declare[restore=%s, force=%s] %s"), restore, force, self)
 
         async def fn():
             channel = await self.conn.channel()
@@ -916,7 +896,7 @@ class Queue:
                 channel = await self.conn.channel()
                 await channel.queue_delete(self.name)
 
-            await retry(
+            await _retry(
                 retry_timeouts=[0],
                 exc_filter=lambda e: isinstance(e, aiormq.ChannelPreconditionFailed),
                 on_error=on_error,
@@ -950,7 +930,7 @@ class Queue:
         """
 
         logger.debug(
-            _("Bind queue '%s' to exchange '%s' with routing_key '%s'"),
+            _("bind queue '%s' to exchange '%s' with routing_key '%s'"),
             self.name,
             exchange.name,
             routing_key,
@@ -985,7 +965,7 @@ class Queue:
         """
 
         logger.debug(
-            _("Unbind queue '%s' from exchange '%s' for routing_key '%s'"),
+            _("unbind queue '%s' from exchange '%s' for routing_key '%s'"),
             self.name,
             exchange.name,
             routing_key,
@@ -1048,13 +1028,13 @@ class Queue:
                 ),
             )
 
-            logger.info(_("%s consuming"), self)
+            logger.info(_("consume %s"), self)
 
             self.conn.set_callback(
                 "on_lost",
                 f"on_lost_queue_{self.name}_consume",
                 partial(
-                    retry(
+                    _retry(
                         retry_timeouts=repeat(retry_timeout),
                         exc_filter=lambda e: True,
                     )(self.consume),
@@ -1074,7 +1054,7 @@ class Queue:
             timeout: Operation timeout. If `None` `self.timeout` will be used.
         """
 
-        logger.debug(_("%s stop consuming"), self)
+        logger.debug(_("stop consume %s"), self)
 
         self.conn.remove_callback("on_lost", f"on_lost_queue_{self.name}_consume", cancel=True)
 

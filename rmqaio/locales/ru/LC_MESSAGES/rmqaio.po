@@ -5,8 +5,8 @@
 msgid ""
 msgstr ""
 "Project-Id-Version: \n"
-"POT-Creation-Date: 2024-10-09 17:05+0300\n"
-"PO-Revision-Date: 2024-10-09 17:05+0300\n"
+"POT-Creation-Date: 2024-10-09 20:18+0300\n"
+"PO-Revision-Date: 2024-10-09 20:18+0300\n"
 "Last-Translator: \n"
 "Language-Team: \n"
 "Language: ru\n"
@@ -16,77 +16,87 @@ msgstr ""
 "Generated-By: pygettext.py 1.5\n"
 "X-Generator: Poedit 3.5\n"
 
-#: ../rmqaio/rmqaio.py:116
+#: ../rmqaio/rmqaio.py:115
 msgid "%s (%s %s) retry(%s) in %s second(s)"
 msgstr "%s (%s %s) повтор(%s) через %s секунд(у)"
 
-#: ../rmqaio/rmqaio.py:295
+#: ../rmqaio/rmqaio.py:222
+msgid "len(url) not match len(ssl_context)"
+msgstr ""
+
+#: ../rmqaio/rmqaio.py:272
 msgid "%s unclosed"
 msgstr "%s не закрыто"
 
-#: ../rmqaio/rmqaio.py:321
+#: ../rmqaio/rmqaio.py:298
 msgid "%s execute callback[tp=%s, name=%s, reraise=%s]"
 msgstr "%s выполняю callback[tp=%s, name=%s, reraise=%s]"
 
-#: ../rmqaio/rmqaio.py:332
+#: ../rmqaio/rmqaio.py:309
 msgid "%s callback[tp=%s, name=%s, callback=%s] error"
 msgstr "%s ошибка выполнения callback[tp=%s, name=%s, callback=%s]"
 
-#: ../rmqaio/rmqaio.py:342
+#: ../rmqaio/rmqaio.py:319
 msgid "%s set callback[tp=%s, name=%s, callback=%s]"
 msgstr "%s устанавливаю callback[tp=%s, name=%s, callback=%s]"
 
-#: ../rmqaio/rmqaio.py:401
+#: ../rmqaio/rmqaio.py:378
 msgid "%s connection lost"
 msgstr "%s соединение потеряно"
 
-#: ../rmqaio/rmqaio.py:424
+#: ../rmqaio/rmqaio.py:401
 msgid "%s connecting[timeout=%s]..."
 msgstr "%s подключаюсь[тайм-аут=%s]..."
 
-#: ../rmqaio/rmqaio.py:447
+#: ../rmqaio/rmqaio.py:427
 msgid "%s connected"
 msgstr "%s подключено"
 
-#: ../rmqaio/rmqaio.py:499
+#: ../rmqaio/rmqaio.py:479
 msgid "%s close underlying connection"
 msgstr "%s закрываю внутреннее соединение"
 
-#: ../rmqaio/rmqaio.py:513
+#: ../rmqaio/rmqaio.py:493
 msgid "%s closed"
 msgstr "%s закрыто"
 
-#: ../rmqaio/rmqaio.py:573 ../rmqaio/rmqaio.py:784
-msgid "%s close"
-msgstr "%s закрываю"
+#: ../rmqaio/rmqaio.py:553 ../rmqaio/rmqaio.py:764
+msgid "close %s"
+msgstr "закрываю %s"
 
-#: ../rmqaio/rmqaio.py:601 ../rmqaio/rmqaio.py:752
-msgid "Exchange[name='%s'] channel[%s] publish[routing_key='%s'] %s"
-msgstr "Exchange[name='%s'] канал[%s] публикую[routing_key='%s'] %s"
+#: ../rmqaio/rmqaio.py:581 ../rmqaio/rmqaio.py:732
+msgid "exchange[name='%s'] channel[%s] publish[routing_key='%s'] %s"
+msgstr "обменник[name='%s'] канал[%s] публикую[routing_key='%s'] %s"
 
-#: ../rmqaio/rmqaio.py:663 ../rmqaio/rmqaio.py:856
-msgid "%s close[delete=%s]"
-msgstr "%s закрываю[delete=%s]"
+#: ../rmqaio/rmqaio.py:643 ../rmqaio/rmqaio.py:836
+msgid "close[delete=%s] %s"
+msgstr "закрываю[delete=%s] %s"
 
-#: ../rmqaio/rmqaio.py:698 ../rmqaio/rmqaio.py:891
-msgid "%s declare[restore=%s, force=%s]"
-msgstr "%s объявляю[restore=%s, force=%s]"
+#: ../rmqaio/rmqaio.py:678 ../rmqaio/rmqaio.py:871
+msgid "declare[restore=%s, force=%s] %s"
+msgstr "объявляю[restore=%s, force=%s] %s"
 
-#: ../rmqaio/rmqaio.py:953
-msgid "Bind queue '%s' to exchange '%s' with routing_key '%s'"
-msgstr "Подключаю очередь '%s' к exchange '%s' с ключом маршрутизации '%s'"
+#: ../rmqaio/rmqaio.py:933
+msgid "bind queue '%s' to exchange '%s' with routing_key '%s'"
+msgstr "привязываю очередь '%s' к обменнику '%s' с ключом маршрутизации '%s'"
 
-#: ../rmqaio/rmqaio.py:988
-msgid "Unbind queue '%s' from exchange '%s' for routing_key '%s'"
-msgstr "Отключаю очередь '%s' от exchange '%s' для ключа маршрутизации '%s'"
+#: ../rmqaio/rmqaio.py:968
+msgid "unbind queue '%s' from exchange '%s' for routing_key '%s'"
+msgstr "отвязываю очередь '%s' от обменника '%s' для ключа маршрутизации '%s'"
 
-#: ../rmqaio/rmqaio.py:1051
-msgid "%s consuming"
-msgstr "%s слушаю"
+#: ../rmqaio/rmqaio.py:1031
+msgid "consume %s"
+msgstr "слушаю %s"
 
-#: ../rmqaio/rmqaio.py:1077
-msgid "%s stop consuming"
-msgstr "%s перестал слушать"
+#: ../rmqaio/rmqaio.py:1057
+msgid "stop consume %s"
+msgstr "перестаю слушать %s"
+
+#~ msgid "%s close"
+#~ msgstr "%s закрываю"
+
+#~ msgid "%s consuming"
+#~ msgstr "%s слушаю"
 
 #~ msgid "RabbitMQ queue type"
 #~ msgstr "Тип очереди RabbitMQ"
