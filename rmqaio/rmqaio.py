@@ -212,11 +212,6 @@ class Connection:
         if ssl_context and len(urls) != len(ssl_contexts):
             raise Exception(_("len(url) not match len(ssl_context)"))
 
-        self._iter = _LoopIter(list(zip(urls, ssl_contexts)))
-
-        self.url = urls[0]
-        self.ssl_context = ssl_contexts[0]
-
         self.name = name or uuid4().hex[-4:]
 
         self._open_task: Task | Future = Future()
@@ -235,6 +230,9 @@ class Connection:
             self.__shared[self._key] = {
                 "refs": 0,
                 "objs": 0,
+                "url": urls[0],
+                "ssl_context": ssl_contexts[0],
+                "iter": _LoopIter(list(zip(urls, ssl_contexts))),
                 "conn": None,
                 "connect_lock": Lock(),
             }
@@ -267,6 +265,14 @@ class Connection:
                 shared.pop(self, None)
             if shared["objs"] == 0:
                 self.__shared.pop(self._key, None)
+
+    @property
+    def url(self) -> str:
+        return self._shared["url"]
+
+    @property
+    def ssl_context(self) -> SSLContext | None:
+        return self._shared["ssl_context"]
 
     @property
     def _conn(self) -> aiormq.abc.AbstractConnection:
@@ -374,7 +380,7 @@ class Connection:
             await self._execute_callbacks("on_lost")
 
     async def _connect(self):
-        self.url, self.ssl_context = next(self._iter)
+        self._shared["url"], self._shared["ssl_context"] = next(self._shared["iter"])
         while not self.is_closed:
             connect_timeout = yarl.URL(self.url).query.get("connection_timeout")
             if connect_timeout is not None:
@@ -386,16 +392,16 @@ class Connection:
                 async with asyncio.timeout(connect_timeout):
                     self._conn = await aiormq.connect(self.url, context=self.ssl_context)
                 logger.info(_("%s connected"), self)
-                self._iter.reset()
+                self._shared["iter"].reset()
                 break
             except (asyncio.TimeoutError, ConnectionError, aiormq.exceptions.AMQPConnectionError) as e:
                 try:
-                    url, ssl_context = next(self._iter)
+                    url, ssl_context = next(self._shared["iter"])
                 except StopIteration:
                     raise e
                 logger.warning("%s %s %s", self, e.__class__, e)
-                self.url = url
-                self.ssl_context = ssl_context
+                self._shared["url"] = url
+                self._shared["ssl_context"] = ssl_context
 
     async def open(
         self,

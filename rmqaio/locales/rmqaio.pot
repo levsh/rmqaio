@@ -5,7 +5,7 @@
 msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
-"POT-Creation-Date: 2024-10-10 15:25+0300\n"
+"POT-Creation-Date: 2024-10-10 16:56+0300\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -23,71 +23,71 @@ msgstr ""
 msgid "len(url) not match len(ssl_context)"
 msgstr ""
 
-#: ../rmqaio/rmqaio.py:263
+#: ../rmqaio/rmqaio.py:261
 msgid "%s unclosed"
 msgstr ""
 
-#: ../rmqaio/rmqaio.py:289
+#: ../rmqaio/rmqaio.py:295
 msgid "%s execute callback[tp=%s, name=%s, reraise=%s]"
 msgstr ""
 
-#: ../rmqaio/rmqaio.py:300
+#: ../rmqaio/rmqaio.py:306
 msgid "%s callback[tp=%s, name=%s, callback=%s] error"
 msgstr ""
 
-#: ../rmqaio/rmqaio.py:310
+#: ../rmqaio/rmqaio.py:316
 msgid "%s set callback[tp=%s, name=%s, callback=%s]"
 msgstr ""
 
-#: ../rmqaio/rmqaio.py:369
+#: ../rmqaio/rmqaio.py:375
 msgid "%s connection lost"
 msgstr ""
 
-#: ../rmqaio/rmqaio.py:385
+#: ../rmqaio/rmqaio.py:391
 msgid "%s connecting[timeout=%s]..."
 msgstr ""
 
-#: ../rmqaio/rmqaio.py:388
+#: ../rmqaio/rmqaio.py:394
 msgid "%s connected"
 msgstr ""
 
-#: ../rmqaio/rmqaio.py:459
+#: ../rmqaio/rmqaio.py:465
 msgid "%s close underlying connection"
 msgstr ""
 
-#: ../rmqaio/rmqaio.py:475
+#: ../rmqaio/rmqaio.py:481
 msgid "%s closed"
 msgstr ""
 
-#: ../rmqaio/rmqaio.py:535 ../rmqaio/rmqaio.py:746
+#: ../rmqaio/rmqaio.py:541 ../rmqaio/rmqaio.py:752
 msgid "close %s"
 msgstr ""
 
-#: ../rmqaio/rmqaio.py:563 ../rmqaio/rmqaio.py:714
+#: ../rmqaio/rmqaio.py:569 ../rmqaio/rmqaio.py:720
 msgid "exchange[name='%s'] channel[%s] publish[routing_key='%s'] %s"
 msgstr ""
 
-#: ../rmqaio/rmqaio.py:625 ../rmqaio/rmqaio.py:818
+#: ../rmqaio/rmqaio.py:631 ../rmqaio/rmqaio.py:824
 msgid "close[delete=%s] %s"
 msgstr ""
 
-#: ../rmqaio/rmqaio.py:660 ../rmqaio/rmqaio.py:853
+#: ../rmqaio/rmqaio.py:666 ../rmqaio/rmqaio.py:859
 msgid "declare[restore=%s, force=%s] %s"
 msgstr ""
 
-#: ../rmqaio/rmqaio.py:915
+#: ../rmqaio/rmqaio.py:921
 msgid "bind queue '%s' to exchange '%s' with routing_key '%s'"
 msgstr ""
 
-#: ../rmqaio/rmqaio.py:950
+#: ../rmqaio/rmqaio.py:956
 msgid "unbind queue '%s' from exchange '%s' for routing_key '%s'"
 msgstr ""
 
-#: ../rmqaio/rmqaio.py:1013
+#: ../rmqaio/rmqaio.py:1019
 msgid "consume %s"
 msgstr ""
 
-#: ../rmqaio/rmqaio.py:1039
+#: ../rmqaio/rmqaio.py:1045
 msgid "stop consume %s"
 msgstr ""
 
