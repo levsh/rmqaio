@@ -10,6 +10,40 @@ import pytest
 import rmqaio
 
 
+def test_LoopIter():
+    it = rmqaio.rmqaio._LoopIter(["a", "b"])
+    for idx in range(3):
+        assert next(it) == "a", idx
+        assert next(it) == "b", idx
+        with pytest.raises(StopIteration):
+            next(it)
+
+    it = rmqaio.rmqaio._LoopIter(["a", "b"])
+    for idx in range(3):
+        assert next(it) == "a", idx
+        it.reset()
+        assert next(it) == "a", idx
+        assert next(it) == "b", idx
+        with pytest.raises(StopIteration):
+            next(it)
+
+    assert next(it) == "a"
+    assert next(it) == "b"
+    it.reset()
+    assert next(it) == "b"
+    assert next(it) == "a"
+    with pytest.raises(StopIteration):
+        next(it)
+    assert next(it) == "b"
+    assert next(it) == "a"
+    with pytest.raises(StopIteration):
+        next(it)
+    assert next(it) == "b"
+    assert next(it) == "a"
+    with pytest.raises(StopIteration):
+        next(it)
+
+
 async def assert_has_connection(api):
     for _ in range(10):
         resp = api.get("/api/connections")
@@ -106,7 +140,6 @@ class TestConnection:
         conn = rmqaio.Connection("amqp://admin@example.com", name="abc")
         try:
             assert str(conn.url) == "amqp://admin@example.com"
-            assert conn.urls == ["amqp://admin@example.com"]
             assert conn.name == "abc"
             assert conn._key is not None
             assert conn._key in conn._Connection__shared
@@ -219,12 +252,15 @@ class TestRMQAIO:
         api = httpx.Client(base_url=f"http://{rabbitmq['ip']}:15672", auth=("guest", "guest"))
 
         conn = rmqaio.Connection(
-            f"amqp://{rabbitmq['ip']}:{rabbitmq['port']}",
+            [
+                "amqp://invalid",
+                f"amqp://{rabbitmq['ip']}:{rabbitmq['port']}",
+            ],
             name="abc",
             retry_timeouts=[1, 3, 5],
         )
         assert conn
-        assert f"{conn}" == f"Connection[{rabbitmq['ip']}]#abc"
+        assert f"{conn}" == f"Connection[invalid]#abc"
         assert conn.is_open is False
         assert conn.is_closed is False
 
@@ -253,7 +289,9 @@ class TestRMQAIO:
         api = httpx.Client(base_url=f"http://{rabbitmq['ip']}:15672", auth=("guest", "guest"))
 
         exchange = rmqaio.Exchange(
-            conn_factory=lambda: rmqaio.Connection(f"amqp://{rabbitmq['ip']}:{rabbitmq['port']}")
+            conn_factory=lambda: rmqaio.Connection(
+                [f"amqp://{rabbitmq['ip']}:{rabbitmq['port']}"],
+            )
         )
         try:
             await exchange.declare()
@@ -263,7 +301,10 @@ class TestRMQAIO:
         exchange = rmqaio.Exchange(
             name="test",
             conn_factory=lambda: rmqaio.Connection(
-                f"amqp://{rabbitmq['ip']}:{rabbitmq['port']}",
+                [
+                    "amqp://invalid",
+                    f"amqp://{rabbitmq['ip']}:{rabbitmq['port']}",
+                ],
                 retry_timeouts=[1, 3, 5],
             ),
         )
@@ -294,11 +335,14 @@ class TestRMQAIO:
 
     @pytest.mark.asyncio
     async def test_lost_connection(self, rabbitmq):
-        rmqaio.logger.setLevel("DEBUG")
         api = httpx.Client(base_url=f"http://{rabbitmq['ip']}:15672", auth=("guest", "guest"))
 
         conn = rmqaio.Connection(
-            f"amqp://{rabbitmq['ip']}:{rabbitmq['port']}",
+            [
+                "amqp://invalid1?connection_timeout=1000",
+                "amqp://invalid2?connection_timeout=2000",
+                f"amqp://{rabbitmq['ip']}:{rabbitmq['port']}",
+            ],
             name="abc",
             retry_timeouts=repeat(1),
         )
@@ -318,7 +362,7 @@ class TestRMQAIO:
 
             await asyncio.sleep(5)
 
-            for _ in range(30):
+            for _ in range(20):
                 if conn.is_open:
                     break
                 await asyncio.sleep(1)

@@ -11,7 +11,7 @@ from rmqaio import logger
 from tests import utils
 
 
-logger.setLevel(logging.DEBUG)
+logger.setLevel(logging.INFO)
 rmqaio.LOG_SANITIZE = False
 
 
