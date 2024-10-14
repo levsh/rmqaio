@@ -12,7 +12,7 @@ from functools import partial, wraps
 from inspect import iscoroutine, iscoroutinefunction
 from itertools import chain, repeat
 from ssl import SSLContext
-from typing import Any, Callable, Coroutine, Iterable
+from typing import Any, Callable, Coroutine, Iterable, cast
 from uuid import uuid4
 
 import aiormq
@@ -209,7 +209,7 @@ class Connection:
         else:
             ssl_contexts = list(ssl_context)
 
-        if ssl_context and len(urls) != len(ssl_contexts):
+        if ssl_context is not None and len(urls) != len(ssl_contexts):
             raise Exception(_("len(url) not match len(ssl_context)"))
 
         self.name = name or uuid4().hex[-4:]
@@ -634,7 +634,7 @@ class Exchange:
             if self.conn_factory:
                 self.conn.remove_callbacks(cancel=True)
             else:
-                self.conn.remove_callback("on_open", f"on_open_exchange_{self.name}_declare", cancel=True)
+                self.conn.remove_callback("on_open", f"on_open_exchange_[{self.name}]_declare", cancel=True)
             if delete and self.name != "":
                 channel = await self.conn.channel()
                 try:
@@ -693,7 +693,7 @@ class Exchange:
         if restore:
             self.conn.set_callback(
                 "on_open",
-                f"on_open_exchange_{self.name}_declare",
+                f"on_open_exchange_[{self.name}]_declare",
                 partial(self.declare, timeout=timeout, restore=restore, force=force),
             )
 
@@ -760,7 +760,7 @@ class Queue:
 
     Args:
         name: Queue name.
-        type: Queue [type](https://www.rabbitmq.com/docs/queues#distributed).
+        type: Queue type.
         durable: Queue durable [option](https://www.rabbitmq.com/docs/queues#durability).
         exclusive: Queue exclusive [option](https://www.rabbitmq.com/docs/queues#exclusive-queues).
         auto_delete: Queue auto-delete option.
@@ -800,12 +800,12 @@ class Queue:
             object.__setattr__(self, "conn", self.conn_factory())
         self.conn.set_callback(
             "on_lost",
-            f"on_lost_queue_{self.name}_cleanup_consumer",
+            f"on_lost_queue_[{self.name}]_cleanup_consumer",
             lambda: object.__setattr__(self, "consumer", None),
         )
         self.conn.set_callback(
             "on_close",
-            f"on_close_queue_{self.name}_cleanup_consumer",
+            f"on_close_queue_[{self.name}]_cleanup_consumer",
             lambda: object.__setattr__(self, "consumer", None),
         )
 
@@ -830,7 +830,7 @@ class Queue:
             if self.conn_factory:
                 self.conn.remove_callbacks(cancel=True)
             else:
-                self.conn.remove_callback("on_open", f"on_open_queue_{self.name}_declare", cancel=True)
+                self.conn.remove_callback("on_open", f"on_open_queue_[{self.name}]_declare", cancel=True)
             if delete:
                 channel = await self.conn.channel()
                 try:
@@ -896,7 +896,7 @@ class Queue:
         if restore:
             self.conn.set_callback(
                 "on_open",
-                f"on_open_queue_{self.name}_declare",
+                f"on_open_queue_[{self.name}]_declare",
                 partial(self.declare, timeout=timeout, restore=restore, force=force),
             )
 
@@ -938,7 +938,7 @@ class Queue:
         if restore:
             self.conn.set_callback(
                 "on_open",
-                f"on_open_queue_{self.name}_bind_{exchange.name}_{routing_key}",
+                f"on_open_queue_[{self.name}]_bind_[{exchange.name}]_[{routing_key}]",
                 partial(self.bind, exchange, routing_key, timeout=timeout, restore=restore),
             )
 
@@ -972,7 +972,7 @@ class Queue:
 
             self.conn.remove_callback(
                 "on_open",
-                f"on_open_queue_{self.name}_bind_{exchange.name}_{routing_key}",
+                f"on_open_queue_[{self.name}]_bind_[{exchange.name}]_[{routing_key}]",
                 cancel=True,
             )
 
@@ -982,7 +982,7 @@ class Queue:
         prefetch_count: int | None = None,
         timeout: int | None = None,
         retry_timeout: int = 5,
-    ):
+    ) -> Consumer:
         """
         Consume queue.
 
@@ -1020,7 +1020,7 @@ class Queue:
 
             self.conn.set_callback(
                 "on_lost",
-                f"on_lost_queue_{self.name}_consume",
+                f"on_lost_queue_[{self.name}]_consume",
                 partial(
                     _retry(
                         retry_timeouts=repeat(retry_timeout),
@@ -1032,7 +1032,7 @@ class Queue:
                 ),
             )
 
-        return self.consumer
+        return cast(Consumer, self.consumer)
 
     async def stop_consume(self, timeout: int | None = None):
         """
@@ -1044,7 +1044,7 @@ class Queue:
 
         logger.info(_("stop consume %s"), self)
 
-        self.conn.remove_callback("on_lost", f"on_lost_queue_{self.name}_consume", cancel=True)
+        self.conn.remove_callback("on_lost", f"on_lost_queue_[{self.name}]_consume", cancel=True)
 
         if self.consumer and not self.consumer.channel.is_closed:
             await self.consumer.channel.basic_cancel(self.consumer.consumer_tag, timeout=timeout)
