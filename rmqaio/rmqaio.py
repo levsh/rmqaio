@@ -962,29 +962,30 @@ class Queue:
             timeout: Operation timeout. If `None` `self.timeout` will be used.
         """
 
-        logger.info(
-            _("unbind queue '%s' from exchange '%s' for routing_key '%s'"),
-            self.name,
-            exchange.name,
-            routing_key,
-        )
-
-        if (exchange, routing_key) in self.bindings:
-            self.bindings.remove((exchange, routing_key))
-
-            channel = await self.conn.channel()
-            await channel.queue_unbind(
+        if self.bindings:
+            logger.info(
+                _("unbind queue '%s' from exchange '%s' for routing_key '%s'"),
                 self.name,
                 exchange.name,
-                routing_key=routing_key,
-                timeout=timeout or self.timeout,
+                routing_key,
             )
 
-            self.conn.remove_callback(
-                "on_open",
-                f"on_open_queue_[{self.name}]_bind_[{exchange.name}]_[{routing_key}]",
-                cancel=True,
-            )
+            if (exchange, routing_key) in self.bindings:
+                self.bindings.remove((exchange, routing_key))
+
+                channel = await self.conn.channel()
+                await channel.queue_unbind(
+                    self.name,
+                    exchange.name,
+                    routing_key=routing_key,
+                    timeout=timeout or self.timeout,
+                )
+
+                self.conn.remove_callback(
+                    "on_open",
+                    f"on_open_queue_[{self.name}]_bind_[{exchange.name}]_[{routing_key}]",
+                    cancel=True,
+                )
 
     async def consume(
         self,
@@ -1052,11 +1053,11 @@ class Queue:
             timeout: Operation timeout. If `None` `self.timeout` will be used.
         """
 
-        logger.info(_("stop consume %s"), self)
-
         self.conn.remove_callback("on_reconnect", f"on_reconnect_queue_[{self.name}]_consume", cancel=True)
 
         if self.consumer and not self.consumer.channel.is_closed:
+            logger.info(_("stop consume %s"), self)
+
             await self.consumer.channel.basic_cancel(self.consumer.consumer_tag, timeout=timeout)
             await self.consumer.close()
             object.__setattr__(self, "consumer", None)
