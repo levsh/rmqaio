@@ -86,7 +86,7 @@ def _retry(
     retry_timeouts: Iterable[int],
     exc_filter: Callable[[Exception], bool],
     msg: str | None = None,
-    on_error: Callable | None = None,
+    on_error: Callable[[Exception], Coroutine] | None = None,
 ):
     """Retry decorator.
 
@@ -240,9 +240,10 @@ class Connection:
         shared: dict = self.__shared[self._key]
         shared["instances"][self] = {
             "on_open": {},
+            "on_lost": {},
             "on_reconnect": {},
             "on_close": {},
-            "callback_tasks": {"on_open": {}, "on_reconnect": {}, "on_close": {}},
+            "callback_tasks": {"on_open": {}, "on_lost": {}, "on_reconnect": {}, "on_close": {}},
         }
         self._shared = shared
 
@@ -288,7 +289,7 @@ class Connection:
 
     async def _execute_callbacks(
         self,
-        tp: Literal["on_open", "on_reconnect", "on_close"],
+        tp: Literal["on_open", "on_lost", "on_reconnect", "on_close"],
         reraise: bool | None = None,
     ):
         async def fn(name, callback):
@@ -314,7 +315,7 @@ class Connection:
 
     def set_callback(
         self,
-        tp: Literal["on_open", "on_reconnect", "on_close"],
+        tp: Literal["on_open", "on_lost", "on_reconnect", "on_close"],
         name: Hashable,
         callback: Callable,
     ):
@@ -326,7 +327,7 @@ class Connection:
 
     def remove_callback(
         self,
-        tp: Literal["on_open", "on_reconnect", "on_close"],
+        tp: Literal["on_open", "on_lost", "on_reconnect", "on_close"],
         name: Hashable,
         cancel: bool | None = None,
     ):
@@ -343,14 +344,15 @@ class Connection:
     def remove_callbacks(self, cancel: bool | None = None):
         if shared := self._shared["instances"].get(self):
             if cancel:
-                for tp in ("on_open", "on_reconnect", "on_close"):
+                for tp in ("on_open", "on_lost", "on_reconnect", "on_close"):
                     for task in shared["callback_tasks"][tp].values():
                         task.cancel()
             self._shared["instances"][self] = {
                 "on_open": {},
+                "on_lost": {},
                 "on_reconnect": {},
                 "on_close": {},
-                "callback_tasks": {"on_open": {}, "on_reconnect": {}, "on_close": {}},
+                "callback_tasks": {"on_open": {}, "on_lost": {}, "on_reconnect": {}, "on_close": {}},
             }
 
     def __str__(self):
@@ -386,6 +388,7 @@ class Connection:
             if self._channel:
                 await self._channel.close()
             self._refs -= 1
+            await self._execute_callbacks("on_lost")
             self._reconnect_task = create_task(self.open(retry_timeouts=iter(chain((0, 3), repeat(5)))))
             await self._execute_callbacks("on_reconnect")
 

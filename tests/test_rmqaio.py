@@ -147,9 +147,15 @@ class TestConnection:
             assert conn in conn._shared["instances"]
             assert conn._shared["instances"][conn] == {
                 "on_open": {},
+                "on_lost": {},
                 "on_reconnect": {},
                 "on_close": {},
-                "callback_tasks": {"on_close": {}, "on_reconnect": {}, "on_open": {}},
+                "callback_tasks": {
+                    "on_open": {},
+                    "on_lost": {},
+                    "on_reconnect": {},
+                    "on_close": {},
+                },
             }
             assert conn._conn is None
         finally:
@@ -200,11 +206,13 @@ class TestConnection:
 
             conn.remove_callbacks(cancel=True)
             assert conn._shared["instances"][conn]["on_open"] == {}
+            assert conn._shared["instances"][conn]["on_lost"] == {}
             assert conn._shared["instances"][conn]["on_close"] == {}
             assert conn._shared["instances"][conn]["callback_tasks"] == {
-                "on_close": {},
-                "on_reconnect": {},
                 "on_open": {},
+                "on_lost": {},
+                "on_reconnect": {},
+                "on_close": {},
             }
 
             conn.set_callback("on_open", "excpetion", cb_with_exception)
