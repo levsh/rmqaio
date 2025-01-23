@@ -28,7 +28,7 @@ jobs:
         poetry install
     - name: Prepare images
       run: |
-        poetry run inv ensuer-images
+        poetry run inv ensure-images
     - name: Run linters
       run: |
         poetry run inv run-linters

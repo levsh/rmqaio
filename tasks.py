@@ -8,7 +8,7 @@ PYTHON_TAG = os.environ.get("PYTHON_TAG", "3.11-alpine")
 
 @task
 def ensure_images(c):
-    """Build docker images"""
+    """Prepare docker images"""
 
     images = [
         "rabbitmq:3-management",
