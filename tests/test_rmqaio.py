@@ -1,6 +1,7 @@
 import asyncio
 
 from itertools import repeat
+from os import path
 from unittest import mock
 from urllib.parse import quote_plus
 
@@ -8,6 +9,9 @@ import httpx
 import pytest
 
 import rmqaio
+
+
+CWD = path.dirname(path.abspath(__file__))
 
 
 def test_LoopIter():
@@ -269,7 +273,7 @@ class TestRMQAIO:
                 f"amqp://{rabbitmq['ip']}:{rabbitmq['port']}",
             ],
             name="abc",
-            retry_timeouts=[1, 3, 5],
+            retry_timeouts=[1, 3, 5, 5],
         )
         assert conn
         assert f"{conn}" == f"Connection[invalid]#abc"
@@ -293,6 +297,37 @@ class TestRMQAIO:
             await assert_has_not_connection(api)
             await assert_has_not_channel(api)
 
+        finally:
+            await conn.close()
+
+    @pytest.mark.asyncio
+    async def test_connection_tls(self, rabbitmq_tls):
+        api = httpx.Client(base_url=f"http://{rabbitmq_tls['ip']}:15671", auth=("guest", "guest"))
+
+        conn = rmqaio.Connection(
+            [
+                "amqp://invalid",
+                (
+                    f"amqps://{rabbitmq_tls['ip']}:{rabbitmq_tls['port']}"
+                    "?auth=plain"
+                    f"&certfile={CWD}/files/rabbitmq/tls/client/cert.pem"
+                    f"&keyfile={CWD}/files/rabbitmq/tls/client/key.pem"
+                    "&no_verify_ssl=1"
+                ),
+            ],
+            name="abc",
+            retry_timeouts=[1, 3, 5, 5],
+        )
+        assert conn
+        assert f"{conn}" == f"Connection[invalid]#abc"
+        assert conn.ssl_context is None
+        assert conn.is_open is False
+        assert conn.is_closed is False
+
+        try:
+            await conn.open()
+            assert conn.is_open is True
+            assert conn.is_closed is False
         finally:
             await conn.close()
 

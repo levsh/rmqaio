@@ -1,8 +1,7 @@
 import logging
-import platform
-import time
 
-import httpx
+from os import path
+
 import pytest
 
 import rmqaio
@@ -15,46 +14,50 @@ logger.setLevel(logging.DEBUG)
 rmqaio.LOG_SANITIZE = False
 
 
-@pytest.fixture(scope="function")
+CWD = path.dirname(path.abspath(__file__))
+
+
+@pytest.fixture(scope="class")
 def container_executor():
-    _container_executor = utils.ContainerExecutor()
-    try:
-        yield _container_executor
-    finally:
-        for container in _container_executor.containers:
-            container.stop()
-            container.remove(v=True)
+    yield utils.ContainerExecutor()
 
 
 @pytest.fixture(scope="function")
 def rabbitmq(container_executor):
-    container = container_executor.run_wait_up(
+    with container_executor.run_wait_up(
         "rabbitmq:3-management",
         ports={"5672": "5672", "15672": "15672"},
-    )
-    if platform.system() == "Darwin":
-        ip, port = "127.0.0.1", 5672
-    else:
-        ip, port = container.attrs["NetworkSettings"]["IPAddress"], 5672
+        healthcheck={
+            "test": ["CMD", "rabbitmq-diagnostics", "-q", "ping"],
+            "interval": 10**9,
+            "timeout": 10**9,
+            "retries": 60,
+        },
+    ) as container:
+        ip = utils.get_ip(container)
+        port = 5672
+        yield {"container": container, "ip": ip, "port": port}
 
-    try:
-        utils.wait_socket_available((ip, port), 20)
-    except Exception:
-        print("\n")
-        print(container.logs().decode())
-        raise
 
-    api = httpx.Client(base_url=f"http://{ip}:15672", auth=("guest", "guest"))
-
-    for _ in range(20):
-        try:
-            resp = api.get(f"/api/vhosts")
-            if resp.status_code == 200:
-                break
-        except httpx.HTTPError:
-            pass
-        time.sleep(1)
-    else:
-        raise Exception
-
-    yield {"container": container, "ip": ip, "port": port}
+@pytest.fixture(scope="function")
+def rabbitmq_tls(container_executor):
+    f = path.join(CWD, "files/rabbitmq")
+    with container_executor.run_wait_up(
+        "rabbitmq:3-management",
+        volumes={
+            f: {"bind": "/etc/rabbitmq/configs", "mode": "ro"},
+        },
+        ports={"5671": "5671", "15672": "15672"},
+        environment={
+            "RABBITMQ_CONFIG_FILE": "/etc/rabbitmq/configs/rabbitmq.conf",
+        },
+        healthcheck={
+            "test": ["CMD", "rabbitmq-diagnostics", "-q", "ping"],
+            "interval": 10**9,
+            "timeout": 10**9,
+            "retries": 60,
+        },
+    ) as container:
+        ip = utils.get_ip(container)
+        port = 5671
+        yield {"container": container, "ip": ip, "port": port}

@@ -28,9 +28,10 @@ ruff = "*"
 [tool.poetry.group.test.dependencies]
 docker = "*"
 httpx = "*"
+invoke = "*"
 pytest = "*"
 pytest_asyncio = "*"
-pytest_timeout = "*"
+pytest-cov = "*"
 
 [tool.poetry.group.docs.dependencies]
 black = "*"

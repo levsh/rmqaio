@@ -356,7 +356,11 @@ class Connection:
             }
 
     def __str__(self):
-        return f"{self.__class__.__name__}[{yarl.URL(self.url).host}]#{self.name}"
+        url = yarl.URL(self.url)
+        if url.port:
+            return f"{self.__class__.__name__}[{url.host}:{url.port}]#{self.name}"
+        else:
+            return f"{self.__class__.__name__}[{url.host}]#{self.name}"
 
     def __repr__(self):
         return self.__str__()
