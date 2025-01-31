@@ -272,11 +272,11 @@ class Connection:
         return self._shared["ssl_context"]
 
     @property
-    def _conn(self) -> aiormq.abc.AbstractConnection:
+    def _conn(self) -> aiormq.Connection:
         return self._shared["conn"]
 
     @_conn.setter
-    def _conn(self, value: aiormq.abc.AbstractConnection | None):
+    def _conn(self, value: aiormq.Connection | None):
         self._shared["conn"] = value
 
     @property
@@ -380,7 +380,11 @@ class Connection:
     async def _watcher(self):
         try:
             self._watcher_task_started.set()
-            await wait([self._conn.closing, self._closed], return_when=FIRST_COMPLETED)
+            aws = [self._conn.closing, self._closed]
+            while True:
+                done, pending = await wait(aws, timeout=5, return_when=FIRST_COMPLETED)
+                if done or (self._conn and self._conn.is_connection_was_stuck):
+                    break
         except Exception as e:
             logger.exception(e)
             logger.warning("%s %s %s", self, e.__class__, e)
@@ -389,8 +393,12 @@ class Connection:
 
         if not self._closed.done():
             logger.warning(_("%s connection lost"), self)
-            if self._channel:
-                await self._channel.close()
+            if self._conn:
+                task = asyncio.create_task(self._conn.close())
+                try:
+                    await wait([task], timeout=5)
+                finally:
+                    task.cancel()
             self._refs -= 1
             await self._execute_callbacks("on_lost")
             self._reconnect_task = create_task(self.open(retry_timeouts=iter(chain((0, 3), repeat(5)))))
@@ -407,7 +415,7 @@ class Connection:
             try:
                 logger.info(_("%s connecting[timeout=%s]..."), self, connect_timeout)
                 async with asyncio.timeout(connect_timeout):
-                    self._conn = await aiormq.connect(self.url, context=self.ssl_context)
+                    self._conn = cast(aiormq.Connection, await aiormq.connect(self.url, context=self.ssl_context))
                 logger.info(_("%s connected"), self)
                 self._shared["iter"].reset()
                 break

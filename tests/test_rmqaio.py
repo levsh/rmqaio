@@ -419,3 +419,43 @@ class TestRMQAIO:
 
         finally:
             await conn.close()
+
+    @pytest.mark.asyncio
+    async def test_stuck_connection(self, rabbitmq):
+        api = httpx.Client(base_url=f"http://{rabbitmq['ip']}:15672", auth=("guest", "guest"))
+
+        conn = rmqaio.Connection(
+            [
+                f"amqp://{rabbitmq['ip']}:{rabbitmq['port']}?heartbeat=2",
+            ],
+            name="abc",
+            retry_timeouts=repeat(1),
+        )
+
+        try:
+            exchange = rmqaio.Exchange(name="test", conn=conn)
+            await exchange.declare(restore=True)
+
+            queue = rmqaio.Queue(name="test", conn=conn)
+            await queue.declare(restore=True)
+
+            rabbitmq["container"].pause()
+
+            await asyncio.sleep(15)
+
+            assert conn.is_open is False
+
+            rabbitmq["container"].unpause()
+
+            await asyncio.sleep(5)
+
+            for _ in range(20):
+                if conn.is_open:
+                    break
+                await asyncio.sleep(1)
+                continue
+            else:
+                assert False
+
+        finally:
+            await conn.close()
