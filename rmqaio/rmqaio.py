@@ -395,10 +395,7 @@ class Connection:
             logger.warning(_("%s connection lost"), self)
             if self._conn:
                 task = asyncio.create_task(self._conn.close())
-                try:
-                    await wait([task], timeout=5)
-                finally:
-                    task.cancel()
+                await wait([task], timeout=5)
             self._refs -= 1
             await self._execute_callbacks("on_lost")
             self._reconnect_task = create_task(self.open(retry_timeouts=iter(chain((0, 3), repeat(5)))))
