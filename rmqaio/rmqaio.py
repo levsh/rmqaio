@@ -848,8 +848,6 @@ class Queue:
 
         try:
             await self.stop_consume()
-            for exchange, routing_key in self.bindings:
-                await self.unbind(exchange, routing_key)
             if self.conn_factory:
                 self.conn.remove_callbacks(cancel=True)
             else:
