@@ -5,8 +5,8 @@
 msgid ""
 msgstr ""
 "Project-Id-Version: \n"
-"POT-Creation-Date: 2025-01-31 14:37+0300\n"
-"PO-Revision-Date: 2025-01-31 14:38+0300\n"
+"POT-Creation-Date: 2025-02-17 11:35+0300\n"
+"PO-Revision-Date: 2025-02-17 11:37+0300\n"
 "Last-Translator: \n"
 "Language-Team: \n"
 "Language: ru\n"
@@ -44,50 +44,54 @@ msgstr "%s устанавливаю callback[tp=%s, name=%s, callback=%s]"
 msgid "%s connection lost"
 msgstr "%s соединение потеряно"
 
-#: ../rmqaio/rmqaio.py:416
+#: ../rmqaio/rmqaio.py:413
 msgid "%s connecting[timeout=%s]..."
 msgstr "%s подключаюсь[тайм-аут=%s]..."
 
-#: ../rmqaio/rmqaio.py:419
+#: ../rmqaio/rmqaio.py:416
 msgid "%s connected"
 msgstr "%s подключено"
 
-#: ../rmqaio/rmqaio.py:490
+#: ../rmqaio/rmqaio.py:487
 msgid "%s close underlying connection"
 msgstr "%s закрываю внутреннее соединение"
 
-#: ../rmqaio/rmqaio.py:506
+#: ../rmqaio/rmqaio.py:503
 msgid "%s closed"
 msgstr "%s закрыто"
 
-#: ../rmqaio/rmqaio.py:566 ../rmqaio/rmqaio.py:777
+#: ../rmqaio/rmqaio.py:563 ../rmqaio/rmqaio.py:775
 msgid "close %s"
 msgstr "закрываю %s"
 
-#: ../rmqaio/rmqaio.py:594 ../rmqaio/rmqaio.py:745
+#: ../rmqaio/rmqaio.py:591 ../rmqaio/rmqaio.py:743
 msgid "exchange[name='%s'] channel[%s] publish[routing_key='%s'] %s"
 msgstr "обменник[name='%s'] канал[%s] публикую[routing_key='%s'] %s"
 
-#: ../rmqaio/rmqaio.py:656 ../rmqaio/rmqaio.py:849
+#: ../rmqaio/rmqaio.py:653 ../rmqaio/rmqaio.py:847
 msgid "close[delete=%s] %s"
 msgstr "закрываю[delete=%s] %s"
 
-#: ../rmqaio/rmqaio.py:691 ../rmqaio/rmqaio.py:884
+#: ../rmqaio/rmqaio.py:688 ../rmqaio/rmqaio.py:882
 msgid "declare[restore=%s, force=%s] %s"
 msgstr "объявляю[restore=%s, force=%s] %s"
 
-#: ../rmqaio/rmqaio.py:946
+#: ../rmqaio/rmqaio.py:704 ../rmqaio/rmqaio.py:908
+msgid "delete[on_error] %s"
+msgstr "удаляю[on_error] %s"
+
+#: ../rmqaio/rmqaio.py:945
 msgid "bind queue '%s' to exchange '%s' with routing_key '%s'"
 msgstr "привязываю очередь '%s' к обменнику '%s' с ключом маршрутизации '%s'"
 
-#: ../rmqaio/rmqaio.py:982
+#: ../rmqaio/rmqaio.py:981
 msgid "unbind queue '%s' from exchange '%s' for routing_key '%s'"
 msgstr "отвязываю очередь '%s' от обменника '%s' для ключа маршрутизации '%s'"
 
-#: ../rmqaio/rmqaio.py:1045
+#: ../rmqaio/rmqaio.py:1044
 msgid "consume %s"
 msgstr "слушаю %s"
 
-#: ../rmqaio/rmqaio.py:1074
+#: ../rmqaio/rmqaio.py:1073
 msgid "stop consume %s"
 msgstr "перестаю слушать %s"

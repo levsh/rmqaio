@@ -701,6 +701,7 @@ class Exchange:
 
             async def on_error(e):
                 channel = await self.conn.channel()
+                logger.info(_("delete[on_error] %s"), self)
                 await channel.exchange_delete(self.name)
 
             await _retry(
@@ -904,6 +905,7 @@ class Queue:
 
             async def on_error(e):
                 channel = await self.conn.channel()
+                logger.info(_("delete[on_error] %s"), self)
                 await channel.queue_delete(self.name)
 
             await _retry(
