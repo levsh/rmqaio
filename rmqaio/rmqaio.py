@@ -319,7 +319,6 @@ class Connection:
         name: Hashable,
         callback: Callable,
     ):
-        logger.debug(_("%s set callback[tp=%s, name=%s, callback=%s]"), self, tp, name, callback)
         if shared := self._shared["instances"].get(self):
             if tp not in shared:
                 raise ValueError("invalid callback type")
@@ -717,7 +716,12 @@ class Exchange:
             self.conn.set_callback(
                 "on_open",
                 f"on_open_exchange_[{self.name}]_declare",
-                partial(self.declare, timeout=timeout, restore=restore, force=force),
+                partial(
+                    _retry(retry_timeouts=repeat(10), exc_filter=lambda e: True)(self.declare),
+                    timeout=timeout,
+                    restore=restore,
+                    force=force,
+                ),
             )
 
     async def publish(
@@ -919,7 +923,12 @@ class Queue:
             self.conn.set_callback(
                 "on_open",
                 f"on_open_queue_[{self.name}]_declare",
-                partial(self.declare, timeout=timeout, restore=restore, force=force),
+                partial(
+                    _retry(retry_timeouts=repeat(10), exc_filter=lambda e: True)(self.declare),
+                    timeout=timeout,
+                    restore=restore,
+                    force=force,
+                ),
             )
 
     async def bind(
@@ -961,7 +970,13 @@ class Queue:
             self.conn.set_callback(
                 "on_open",
                 f"on_open_queue_[{self.name}]_bind_[{exchange.name}]_[{routing_key}]",
-                partial(self.bind, exchange, routing_key, timeout=timeout, restore=restore),
+                partial(
+                    _retry(retry_timeouts=repeat(10), exc_filter=lambda e: True)(self.bind),
+                    exchange,
+                    routing_key,
+                    timeout=timeout,
+                    restore=restore,
+                ),
             )
 
     async def unbind(self, exchange: Exchange, routing_key: str, timeout: int | None = None):
