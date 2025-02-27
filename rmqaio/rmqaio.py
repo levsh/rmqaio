@@ -6,6 +6,7 @@ import sys
 
 from asyncio import FIRST_COMPLETED, Event, Future, Lock, Task, create_task, current_task, get_event_loop, sleep, wait
 from collections.abc import Hashable
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from enum import StrEnum
 from functools import partial, wraps
@@ -239,11 +240,9 @@ class Connection:
 
         shared: dict = self.__shared[self._key]
         shared["instances"][self] = {
-            "on_open": {},
-            "on_lost": {},
             "on_reconnect": {},
             "on_close": {},
-            "callback_tasks": {"on_open": {}, "on_lost": {}, "on_reconnect": {}, "on_close": {}},
+            "callback_tasks": {"on_reconnect": {}, "on_close": {}},
         }
         self._shared = shared
 
@@ -254,6 +253,8 @@ class Connection:
         self._exc_filter = exc_filter or (
             lambda e: isinstance(e, (asyncio.TimeoutError, ConnectionError, aiormq.exceptions.AMQPConnectionError))
         )
+
+        self._state: ContextVar[str] = ContextVar("state", default="")
 
     def __del__(self):
         if getattr(self, "_key", None):
@@ -289,7 +290,7 @@ class Connection:
 
     async def _execute_callbacks(
         self,
-        tp: Literal["on_open", "on_lost", "on_reconnect", "on_close"],
+        tp: Literal["on_reconnect", "on_close"],
         reraise: bool | None = None,
     ):
         async def fn(name, callback):
@@ -297,25 +298,28 @@ class Connection:
 
             self._shared["instances"][self]["callback_tasks"][tp][name] = current_task()
             try:
-                if iscoroutinefunction(callback):
-                    await callback()
-                else:
-                    res = callback()
-                    if iscoroutine(res):
-                        await res
+                try:
+                    if iscoroutinefunction(callback):
+                        await callback()
+                    else:
+                        res = callback()
+                        if iscoroutine(res):
+                            await res
+                except Exception as e:
+                    logger.exception(_("%s callback[tp=%s, name=%s, callback=%s] error"), self, tp, name, callback)
+                    if reraise:
+                        raise e
+                finally:
+                    self._shared["instances"][self]["callback_tasks"][tp].pop(name, None)
             except Exception as e:
-                logger.exception(_("%s callback[tp=%s, name=%s, callback=%s] error"), self, tp, name, callback)
-                if reraise:
-                    raise e
-            finally:
-                self._shared["instances"][self]["callback_tasks"][tp].pop(name, None)
+                logger.exception(e)
 
         for name, callback in tuple(self._shared["instances"][self][tp].items()):
             await create_task(fn(name, callback))
 
     def set_callback(
         self,
-        tp: Literal["on_open", "on_lost", "on_reconnect", "on_close"],
+        tp: Literal["on_reconnect", "on_close"],
         name: Hashable,
         callback: Callable,
     ):
@@ -326,7 +330,7 @@ class Connection:
 
     def remove_callback(
         self,
-        tp: Literal["on_open", "on_lost", "on_reconnect", "on_close"],
+        tp: Literal["on_reconnect", "on_close"],
         name: Hashable,
         cancel: bool | None = None,
     ):
@@ -343,15 +347,13 @@ class Connection:
     def remove_callbacks(self, cancel: bool | None = None):
         if shared := self._shared["instances"].get(self):
             if cancel:
-                for tp in ("on_open", "on_lost", "on_reconnect", "on_close"):
+                for tp in ("on_reconnect", "on_close"):
                     for task in shared["callback_tasks"][tp].values():
                         task.cancel()
             self._shared["instances"][self] = {
-                "on_open": {},
-                "on_lost": {},
                 "on_reconnect": {},
                 "on_close": {},
-                "callback_tasks": {"on_open": {}, "on_lost": {}, "on_reconnect": {}, "on_close": {}},
+                "callback_tasks": {"on_reconnect": {}, "on_close": {}},
             }
 
     def __str__(self):
@@ -396,9 +398,11 @@ class Connection:
                 task = asyncio.create_task(self._conn.close())
                 await wait([task], timeout=5)
             self._refs -= 1
-            await self._execute_callbacks("on_lost")
-            self._reconnect_task = create_task(self.open(retry_timeouts=iter(chain((0, 3), repeat(5)))))
-            await self._execute_callbacks("on_reconnect")
+            token = self._state.set("reconnect")
+            try:
+                self._reconnect_task = create_task(self.open(retry_timeouts=iter(chain((0, 3), repeat(5)))))
+            finally:
+                self._state.reset(token)
 
     async def _connect(self):
         self._shared["url"], self._shared["ssl_context"] = next(self._shared["iter"])
@@ -431,6 +435,9 @@ class Connection:
     ):
         """Open connection."""
 
+        if self._state.get() == "on_reconnect":
+            return
+
         if self.is_open:
             return
 
@@ -452,16 +459,20 @@ class Connection:
                 await self._open_task
 
             if self._watcher_task is None:
+                if self._state.get() == "reconnect":
+                    token = self._state.set("on_reconnect")
+                    try:
+                        await self._execute_callbacks("on_reconnect", reraise=True)
+                    except Exception as e:
+                        logger.exception(e)
+                        await self.close()
+                        raise e
+                    finally:
+                        self._state.reset(token)
                 self._refs += 1
                 self._watcher_task_started.clear()
                 self._watcher_task = create_task(self._watcher())
                 await self._watcher_task_started.wait()
-                try:
-                    await self._execute_callbacks("on_open", reraise=True)
-                except Exception as e:
-                    logger.exception(e)
-                    await self.close()
-                    raise e
 
     async def close(self):
         """Close connection."""
@@ -655,7 +666,11 @@ class Exchange:
             if self.conn_factory:
                 self.conn.remove_callbacks(cancel=True)
             else:
-                self.conn.remove_callback("on_open", f"on_open_exchange_[{self.name}]_declare", cancel=True)
+                self.conn.remove_callback(
+                    "on_reconnect",
+                    f"on_reconnect_exchange_[{self.name}]_declare",
+                    cancel=True,
+                )
             if delete and self.name != "":
                 channel = await self.conn.channel()
                 try:
@@ -714,10 +729,10 @@ class Exchange:
 
         if restore:
             self.conn.set_callback(
-                "on_open",
-                f"on_open_exchange_[{self.name}]_declare",
+                "on_reconnect",
+                f"on_reconnect_exchange_[{self.name}]_declare",
                 partial(
-                    _retry(retry_timeouts=repeat(10), exc_filter=lambda e: True)(self.declare),
+                    self.declare,
                     timeout=timeout,
                     restore=restore,
                     force=force,
@@ -855,7 +870,11 @@ class Queue:
             if self.conn_factory:
                 self.conn.remove_callbacks(cancel=True)
             else:
-                self.conn.remove_callback("on_open", f"on_open_queue_[{self.name}]_declare", cancel=True)
+                self.conn.remove_callback(
+                    "on_reconnect",
+                    f"on_reconnect_queue_[{self.name}]_declare",
+                    cancel=True,
+                )
             if delete:
                 channel = await self.conn.channel()
                 try:
@@ -921,10 +940,10 @@ class Queue:
 
         if restore:
             self.conn.set_callback(
-                "on_open",
-                f"on_open_queue_[{self.name}]_declare",
+                "on_reconnect",
+                f"on_reconnect_queue_[{self.name}]_declare",
                 partial(
-                    _retry(retry_timeouts=repeat(10), exc_filter=lambda e: True)(self.declare),
+                    self.declare,
                     timeout=timeout,
                     restore=restore,
                     force=force,
@@ -968,10 +987,10 @@ class Queue:
 
         if restore:
             self.conn.set_callback(
-                "on_open",
-                f"on_open_queue_[{self.name}]_bind_[{exchange.name}]_[{routing_key}]",
+                "on_reconnect",
+                f"on_reconnect_queue_[{self.name}]_bind_[{exchange.name}]_[{routing_key}]",
                 partial(
-                    _retry(retry_timeouts=repeat(10), exc_filter=lambda e: True)(self.bind),
+                    self.bind,
                     exchange,
                     routing_key,
                     timeout=timeout,
@@ -1009,8 +1028,8 @@ class Queue:
                 )
 
                 self.conn.remove_callback(
-                    "on_open",
-                    f"on_open_queue_[{self.name}]_bind_[{exchange.name}]_[{routing_key}]",
+                    "on_reconnect",
+                    f"on_reconnect_queue_[{self.name}]_bind_[{exchange.name}]_[{routing_key}]",
                     cancel=True,
                 )
 
@@ -1060,10 +1079,7 @@ class Queue:
                 "on_reconnect",
                 f"on_reconnect_queue_[{self.name}]_consume",
                 partial(
-                    _retry(
-                        retry_timeouts=repeat(retry_timeout),
-                        exc_filter=lambda e: True,
-                    )(self.consume),
+                    self.consume,
                     callback,
                     prefetch_count=prefetch_count,
                     timeout=timeout,
@@ -1080,7 +1096,11 @@ class Queue:
             timeout: Operation timeout. If `None` `self.timeout` will be used.
         """
 
-        self.conn.remove_callback("on_reconnect", f"on_reconnect_queue_[{self.name}]_consume", cancel=True)
+        self.conn.remove_callback(
+            "on_reconnect",
+            f"on_reconnect_queue_[{self.name}]_consume",
+            cancel=True,
+        )
 
         if self.consumer and not self.consumer.channel.is_closed:
             logger.info(_("stop consume %s"), self)

@@ -150,13 +150,9 @@ class TestConnection:
             assert len(conn._shared["instances"]) == 1
             assert conn in conn._shared["instances"]
             assert conn._shared["instances"][conn] == {
-                "on_open": {},
-                "on_lost": {},
                 "on_reconnect": {},
                 "on_close": {},
                 "callback_tasks": {
-                    "on_open": {},
-                    "on_lost": {},
                     "on_reconnect": {},
                     "on_close": {},
                 },
@@ -175,12 +171,12 @@ class TestConnection:
 
     @pytest.mark.asyncio
     async def test_callbacks(self):
-        on_open_cb_flag = False
+        on_reconnect_cb_flag = False
         on_close_cb_flag = False
 
-        def on_open_cb():
-            nonlocal on_open_cb_flag
-            on_open_cb_flag = not on_open_cb_flag
+        def on_reconnect_cb():
+            nonlocal on_reconnect_cb_flag
+            on_reconnect_cb_flag = not on_reconnect_cb_flag
 
         def on_close_cb():
             nonlocal on_close_cb_flag
@@ -191,36 +187,33 @@ class TestConnection:
 
         conn = rmqaio.Connection("amqp://admin@example.com")
         try:
-            conn.set_callback("on_open", "test", on_open_cb)
-            assert conn._shared["instances"][conn]["on_open"]["test"] == on_open_cb
+            conn.set_callback("on_reconnect", "test", on_reconnect_cb)
+            assert conn._shared["instances"][conn]["on_reconnect"]["test"] == on_reconnect_cb
             conn.set_callback("on_close", "test", on_close_cb)
             assert conn._shared["instances"][conn]["on_close"]["test"] == on_close_cb
 
-            await conn._execute_callbacks("on_open")
-            assert on_open_cb_flag is True
+            await conn._execute_callbacks("on_reconnect")
+            assert on_reconnect_cb_flag is True
             assert on_close_cb_flag is False
 
-            conn.remove_callback("on_open", "test")
-            assert conn._shared["instances"][conn]["on_open"] == {}
+            conn.remove_callback("on_reconnect", "test")
+            assert conn._shared["instances"][conn]["on_reconnect"] == {}
             assert conn._shared["instances"][conn]["on_close"]["test"] == on_close_cb
 
             await conn._execute_callbacks("on_close")
-            assert on_open_cb_flag is True
+            assert on_reconnect_cb_flag is True
             assert on_close_cb_flag is True
 
             conn.remove_callbacks(cancel=True)
-            assert conn._shared["instances"][conn]["on_open"] == {}
-            assert conn._shared["instances"][conn]["on_lost"] == {}
+            assert conn._shared["instances"][conn]["on_reconnect"] == {}
             assert conn._shared["instances"][conn]["on_close"] == {}
             assert conn._shared["instances"][conn]["callback_tasks"] == {
-                "on_open": {},
-                "on_lost": {},
                 "on_reconnect": {},
                 "on_close": {},
             }
 
-            conn.set_callback("on_open", "excpetion", cb_with_exception)
-            await conn._execute_callbacks("on_open")
+            conn.set_callback("on_reconnect", "excpetion", cb_with_exception)
+            await conn._execute_callbacks("on_reconnect")
         finally:
             await conn.close()
 
