@@ -345,7 +345,7 @@ class TestRMQAIO:
                     "amqp://invalid",
                     f"amqp://{rabbitmq['ip']}:{rabbitmq['port']}",
                 ],
-                retry_timeouts=[1, 3, 5],
+                retry_timeouts=[1, 3, 5, 5],
             ),
         )
         try:
@@ -363,7 +363,7 @@ class TestRMQAIO:
             name="test",
             conn_factory=lambda: rmqaio.Connection(
                 f"amqp://{rabbitmq['ip']}:{rabbitmq['port']}?heartbeat=4",
-                retry_timeouts=[1, 3, 5],
+                retry_timeouts=[1, 3, 5, 5],
             ),
         )
         try:

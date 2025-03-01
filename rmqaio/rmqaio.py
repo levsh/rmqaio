@@ -293,29 +293,23 @@ class Connection:
         tp: Literal["on_reconnect", "on_close"],
         reraise: bool | None = None,
     ):
-        async def fn(name, callback):
+        for name, callback in tuple(self._shared["instances"][self][tp].items()):
             logger.debug(_("%s execute callback[tp=%s, name=%s, reraise=%s]"), self, tp, name, reraise)
 
             self._shared["instances"][self]["callback_tasks"][tp][name] = current_task()
             try:
-                try:
-                    if iscoroutinefunction(callback):
-                        await callback()
-                    else:
-                        res = callback()
-                        if iscoroutine(res):
-                            await res
-                except Exception as e:
-                    logger.exception(_("%s callback[tp=%s, name=%s, callback=%s] error"), self, tp, name, callback)
-                    if reraise:
-                        raise e
-                finally:
-                    self._shared["instances"][self]["callback_tasks"][tp].pop(name, None)
+                if iscoroutinefunction(callback):
+                    await callback()
+                else:
+                    res = callback()
+                    if iscoroutine(res):
+                        await res
             except Exception as e:
-                logger.exception(e)
-
-        for name, callback in tuple(self._shared["instances"][self][tp].items()):
-            await create_task(fn(name, callback))
+                logger.exception(_("%s callback[tp=%s, name=%s, callback=%s] error"), self, tp, name, callback)
+                if reraise:
+                    raise e
+            finally:
+                self._shared["instances"][self]["callback_tasks"][tp].pop(name, None)
 
     def set_callback(
         self,
@@ -400,7 +394,8 @@ class Connection:
             self._refs -= 1
             token = self._state.set("reconnect")
             try:
-                self._reconnect_task = create_task(self.open(retry_timeouts=iter(chain((0, 3), repeat(5)))))
+                logger.info(_("%s reconnecting..."), self)
+                self._reconnect_task = create_task(self.open(retry_timeouts=iter(chain((1, 3), repeat(5)))))
             finally:
                 self._state.reset(token)
 
@@ -445,34 +440,36 @@ class Connection:
             self._closed = Future()
 
         async with self._shared["connect_lock"]:
-            if self._conn is None or self._conn.is_closed:
-                if retry_timeouts is None:
-                    retry_timeouts = self._retry_timeouts
-                if exc_filter is None:
-                    exc_filter = self._exc_filter
-                if retry_timeouts:
-                    self._open_task = create_task(
-                        _retry(retry_timeouts=retry_timeouts, exc_filter=exc_filter)(self._connect)()
-                    )
-                else:
-                    self._open_task = create_task(self._connect())
-                await self._open_task
 
-            if self._watcher_task is None:
-                if self._state.get() == "reconnect":
-                    token = self._state.set("on_reconnect")
-                    try:
-                        await self._execute_callbacks("on_reconnect", reraise=True)
-                    except Exception as e:
-                        logger.exception(e)
-                        await self.close()
-                        raise e
-                    finally:
-                        self._state.reset(token)
-                self._refs += 1
-                self._watcher_task_started.clear()
-                self._watcher_task = create_task(self._watcher())
-                await self._watcher_task_started.wait()
+            if retry_timeouts is None:
+                retry_timeouts = self._retry_timeouts
+
+            if exc_filter is None:
+                exc_filter = self._exc_filter
+
+            async def _open():
+                if self._conn is None or self._conn.is_closed:
+                    self._open_task = create_task(self._connect())
+                    await self._open_task
+                if self._watcher_task is None:
+                    if self._state.get() == "reconnect":
+                        token = self._state.set("on_reconnect")
+                        try:
+                            await self._execute_callbacks("on_reconnect", reraise=True)
+                        except Exception as e:
+                            await self._conn.close()
+                            raise e
+                        finally:
+                            self._state.reset(token)
+                    self._refs += 1
+                    self._watcher_task_started.clear()
+                    self._watcher_task = create_task(self._watcher())
+                    await self._watcher_task_started.wait()
+
+            if retry_timeouts:
+                await _retry(retry_timeouts=retry_timeouts, exc_filter=exc_filter)(_open)()
+            else:
+                await _open()
 
     async def close(self):
         """Close connection."""

@@ -19,7 +19,6 @@ packages = [{include = "rmqaio"}]
 [tool.poetry.dependencies]
 python = "^3.10"
 aiormq = ">=6.7.6"
-rich = "*"
 yarl = "*"
 
 [tool.poetry.group.dev.dependencies]
