@@ -354,8 +354,7 @@ class Connection:
         url = yarl.URL(self.url)
         if url.port:
             return f"{self.__class__.__name__}[{url.host}:{url.port}]#{self.name}"
-        else:
-            return f"{self.__class__.__name__}[{url.host}]#{self.name}"
+        return f"{self.__class__.__name__}[{url.host}]#{self.name}"
 
     def __repr__(self):
         return self.__str__()
@@ -527,9 +526,9 @@ class Connection:
 
 
 @dataclass(slots=True, frozen=True)
-class SimpleExchange:
+class ForeignExchange:
     """
-    Simple exchange. Declaration not allowed.
+    Foreign exchange. Declaration not allowed.
     May be used as RabbitMQ [default exchange](https://www.rabbitmq.com/tutorials/amqp-concepts#exchange-default)
     or foreign exchange.
 
@@ -543,12 +542,12 @@ class SimpleExchange:
         One of the parameters `conn` or `conn_factory` is required.
 
     Examples:
-        >>> SimpleExchange(conn_factory=lambda: Connection("amqp://localhost"))
+        >>> ForeignExchange(conn_factory=lambda: Connection("amqp://localhost"))
 
         Or
 
         >>> conn = Connection("amqp://localhost")
-        >>> SimpleExchange(conn=conn)
+        >>> ForeignExchange(conn=conn)
     """
 
     name: str = ""
@@ -609,6 +608,35 @@ class SimpleExchange:
             properties=BasicProperties(**(properties or {})),
             timeout=timeout or self.timeout,
         )
+
+
+SimpleExchange = ForeignExchange  # backward compatibility
+
+
+@dataclass(slots=True, frozen=True)
+class DefaultExchange(ForeignExchange):
+    """
+    RabbitMQ [default exchange](https://www.rabbitmq.com/tutorials/amqp-concepts#exchange-default).
+    Declaration not allowed.
+
+    Args:
+        timeout: Default timeout for network operations.
+        conn: `rmqaio.Connection` instance.
+        conn_factory: `rmqaio.Connection` instance factroy.
+
+    Warning:
+        One of the parameters `conn` or `conn_factory` is required.
+
+    Examples:
+        >>> DefaultExchange(conn_factory=lambda: Connection("amqp://localhost"))
+
+        Or
+
+        >>> conn = Connection("amqp://localhost")
+        >>> DefaultExchange(conn=conn)
+    """
+
+    name: str = field(default="", init=False)
 
 
 @dataclass(slots=True, frozen=True)
