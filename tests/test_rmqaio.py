@@ -254,6 +254,21 @@ class TestConnection:
         finally:
             await conn.close()
 
+    @pytest.mark.asyncio
+    async def test_close(self, rabbitmq):
+        connections = [
+            rmqaio.Connection(
+                f"amqp://{rabbitmq['ip']}:{rabbitmq['port']}",
+                name=f"{i}",
+                retry_timeouts=[1, 3, 5, 5],
+            )
+            for i in range(5)
+        ]
+        for conn in connections:
+            await conn.open()
+        for conn in reversed(connections):
+            await conn.close()
+
 
 class TestRMQAIO:
     @pytest.mark.asyncio

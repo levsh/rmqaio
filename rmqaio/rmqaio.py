@@ -4,7 +4,19 @@ import logging
 import os
 import sys
 
-from asyncio import FIRST_COMPLETED, Event, Future, Lock, Task, create_task, current_task, get_event_loop, sleep, wait
+from asyncio import (
+    FIRST_COMPLETED,
+    CancelledError,
+    Event,
+    Future,
+    Lock,
+    Task,
+    create_task,
+    current_task,
+    get_event_loop,
+    sleep,
+    wait,
+)
 from collections.abc import Hashable
 from contextvars import ContextVar
 from dataclasses import dataclass, field
@@ -439,7 +451,6 @@ class Connection:
             self._closed = Future()
 
         async with self._shared["connect_lock"]:
-
             if retry_timeouts is None:
                 retry_timeouts = self._retry_timeouts
 
@@ -485,7 +496,9 @@ class Connection:
 
         self._closed.set_result(None)
 
-        self._refs = max(0, self._refs - 1)
+        if self._watcher_task:
+            self._refs = max(0, self._refs - 1)
+
         if self._refs == 0:
             if self._conn:
                 await self._conn.close()
@@ -503,7 +516,7 @@ class Connection:
                 self._reconnect_task.cancel()
             try:
                 await self._reconnect_task
-            except Exception:
+            except (CancelledError, Exception):
                 pass
 
         logger.info(_("%s closed"), self)
@@ -856,7 +869,7 @@ class Queue:
     conn: Connection = None  # type: ignore
     conn_factory: Callable[[], Connection] = field(default=None, repr=False)  # type: ignore
     consumer: Consumer | None = field(default=None, init=False)
-    bindings: list[tuple[Exchange, str]] = field(default_factory=list, init=False)
+    bindings: list[tuple[ForeignExchange | DefaultExchange | Exchange, str]] = field(default_factory=list, init=False)
 
     def __post_init__(self):
         if all((self.conn, self.conn_factory)):
@@ -977,7 +990,7 @@ class Queue:
 
     async def bind(
         self,
-        exchange: Exchange,
+        exchange: ForeignExchange | DefaultExchange | Exchange,
         routing_key: str,
         timeout: int | None = None,
         restore: bool | None = None,
@@ -1023,7 +1036,12 @@ class Queue:
                 ),
             )
 
-    async def unbind(self, exchange: Exchange, routing_key: str, timeout: int | None = None):
+    async def unbind(
+        self,
+        exchange: ForeignExchange | DefaultExchange | Exchange,
+        routing_key: str,
+        timeout: int | None = None,
+    ):
         """
         Unbind queue.
 
