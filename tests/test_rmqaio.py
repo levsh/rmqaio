@@ -340,6 +340,41 @@ class TestRMQAIO:
             await conn.close()
 
     @pytest.mark.asyncio
+    async def test_connection_tls_invalid_path(self, rabbitmq_tls):
+        api = httpx.Client(base_url=f"http://{rabbitmq_tls['ip']}:15671", auth=("guest", "guest"))
+
+        conn = rmqaio.Connection(
+            [
+                (
+                    f"amqps://{rabbitmq_tls['ip']}:{rabbitmq_tls['port']}"
+                    "?auth=plain"
+                    f"&certfile=/invalid/cert.pem"
+                    f"&keyfile=/invalid/key.pem"
+                    "&no_verify_ssl=1"
+                ),
+            ],
+            name="abc",
+            retry_timeouts=[1, 3, 5, 5],
+        )
+        assert conn
+        assert conn.ssl_context is None
+        assert conn.is_open is False
+        assert conn.is_closed is False
+
+        try:
+            for _ in range(2):
+                try:
+                    await conn.open()
+                except FileNotFoundError:
+                    pass
+                else:
+                    assert False
+            assert conn.is_open is False
+            assert conn.is_closed is False
+        finally:
+            await conn.close()
+
+    @pytest.mark.asyncio
     async def test_exchange(self, rabbitmq):
         api = httpx.Client(base_url=f"http://{rabbitmq['ip']}:15672", auth=("guest", "guest"))
 

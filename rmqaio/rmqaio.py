@@ -425,7 +425,12 @@ class Connection:
                 logger.info(_("%s connected"), self)
                 self._shared["iter"].reset()
                 break
-            except (asyncio.TimeoutError, ConnectionError, aiormq.exceptions.AMQPConnectionError) as e:
+            except (
+                asyncio.TimeoutError,
+                ConnectionError,
+                aiormq.exceptions.AMQPConnectionError,
+                FileNotFoundError,
+            ) as e:
                 try:
                     url, ssl_context = next(self._shared["iter"])
                 except StopIteration:
@@ -433,6 +438,9 @@ class Connection:
                 logger.warning("%s %s %s", self, e.__class__, e)
                 self._shared["url"] = url
                 self._shared["ssl_context"] = ssl_context
+            except Exception as e:
+                self._shared["iter"].reset()
+                raise e
 
     async def open(
         self,
