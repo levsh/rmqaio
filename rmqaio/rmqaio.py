@@ -50,13 +50,39 @@ log_hndl.setFormatter(log_frmt)
 logger.addHandler(log_hndl)
 
 
-CONNECT_TIMEOUT = 15
-"""Connection establishment operation timeout."""
+def env_var_as_int(env_var_name: str, default: int) -> int:
+    value = os.environ.get(env_var_name)
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except Exception:
+        raise ValueError(_("invalid value '{}' for environment variable {}").format(value, env_var_name))
 
-LOG_SANITIZE = True
-"""Logger data sanitize flag. If `True` user data will be replaces with `<hidden>` message."""
+
+def env_var_as_bool(env_var_name: str, default: bool = False) -> bool:
+    value = os.environ.get(env_var_name)
+    if value is None:
+        return default
+    if value.lower() in ("1", "true", "yes", "y"):
+        return True
+    if value.lower() in ("0", "false", "no", "n"):
+        return False
+    raise ValueError(_("invalid value '{}' for environment variable {}").format(value, env_var_name))
+
 
 BasicProperties = aiormq.spec.Basic.Properties
+
+
+@dataclass
+class Config:
+    connect_timeout: int = field(default_factory=lambda: env_var_as_int("RMQAIO_CONNECT_TIMEOUT", 15))
+    """Connection establishment operation timeout."""
+    log_sanitize: bool = field(default_factory=lambda: env_var_as_bool("RMQAIO_LOG_SANITIZE", True))
+    """Logger data sanitize flag. If `True` user data will be replaces with `<hidden>` message."""
+
+
+config = Config()
 
 
 class ExchangeType(StrEnum):
@@ -417,7 +443,7 @@ class Connection:
             if connect_timeout is not None:
                 connect_timeout = int(connect_timeout) / 1000
             else:
-                connect_timeout = CONNECT_TIMEOUT
+                connect_timeout = config.connect_timeout
             try:
                 logger.info(_("%s connecting[timeout=%s]..."), self, connect_timeout)
                 async with asyncio.timeout(connect_timeout):
@@ -619,7 +645,7 @@ class ForeignExchange:
             self.name,
             channel,
             routing_key,
-            data if not LOG_SANITIZE else "<hidden>",
+            data if not config.log_sanitize else "<hidden>",
         )
 
         await channel.basic_publish(
@@ -809,7 +835,7 @@ class Exchange:
             self.name,
             channel,
             routing_key,
-            data if not LOG_SANITIZE else "<hidden>",
+            data if not config.log_sanitize else "<hidden>",
         )
 
         await channel.basic_publish(
@@ -873,6 +899,8 @@ class Queue:
     max_priority: int | None = None
     expires: int | None = None
     msg_ttl: int | None = None
+    dead_letter_exchange: str | None = None
+    arguments: dict[str, Any] | None = None
     timeout: int | None = None
     conn: Connection = None  # type: ignore
     conn_factory: Callable[[], Connection] = field(default=None, repr=False)  # type: ignore
@@ -950,15 +978,16 @@ class Queue:
 
         async def fn():
             channel = await self.conn.channel()
-            arguments: dict[str, Any] = {
-                "x-queue-type": self.type,
-            }
+            arguments = self.arguments.copy() if self.arguments else {}
+            arguments["x-queue-type"] = self.type
             if self.max_priority:
                 arguments["x-max-priority"] = self.max_priority
             if self.expires:
                 arguments["x-expires"] = int(self.expires) * 1000
             if self.msg_ttl:
                 arguments["x-message-ttl"] = int(self.msg_ttl) * 1000
+            if self.dead_letter_exchange:
+                arguments["x-dead-letter-exchange"] = self.dead_letter_exchange
             await channel.queue_declare(
                 self.name,
                 durable=self.durable,

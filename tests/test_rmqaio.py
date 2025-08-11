@@ -212,7 +212,7 @@ class TestConnection:
                 "on_close": {},
             }
 
-            conn.set_callback("on_reconnect", "excpetion", cb_with_exception)
+            conn.set_callback("on_reconnect", "exception", cb_with_exception)
             await conn._execute_callbacks("on_reconnect")
         finally:
             await conn.close()
@@ -502,3 +502,19 @@ class TestRMQAIO:
 
         finally:
             await conn.close()
+
+    @pytest.mark.asyncio
+    async def test_publish(self, rabbitmq):
+        rmqaio.config.log_sanitize = False
+
+        exchange = rmqaio.Exchange(
+            conn_factory=lambda: rmqaio.Connection(
+                [f"amqp://{rabbitmq['ip']}:{rabbitmq['port']}"],
+                retry_timeouts=[1, 3, 5, 5],
+            )
+        )
+        try:
+            await exchange.declare()
+            await exchange.publish(b"hello!", routing_key="")
+        finally:
+            await exchange.close(delete=True)
