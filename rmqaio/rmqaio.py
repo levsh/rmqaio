@@ -1107,7 +1107,7 @@ class DelayedExchangeSpec(BaseExchangeSpec):
             raise ValueError("use DefaultExchangeSpec for default exchange instead of name=''")
 
 
-QueueType: TypeAlias = Literal["classic", "quorum"]
+QueueType: TypeAlias = Literal["classic", "quorum", "stream"]
 
 OverflowPolicy: TypeAlias = Literal["drop-head", "reject-publish", "reject-publish-dlx"]
 
@@ -1118,7 +1118,7 @@ class BaseQueueArgs:
     Base queue arguments.
 
     Attributes:
-        queue_type: Queue type (e.g., "classic", "quorum").
+        queue_type: Queue type (e.g., "classic", "quorum", "stream").
         dead_letter_exchange: Dead letter exchange name.
         dead_letter_routing_key: Dead letter routing key.
         message_ttl: Message TTL in milliseconds.
@@ -1447,7 +1447,7 @@ class Ops:
         self._conn = conn
         self._timeout = timeout
         self._topology = Topology()
-        self._consumers = {}
+        self._consumers: dict[str, Consumer] = {}
 
         self._conn.set_callback(
             f"on_connection_state_changed[{id(self)}]",
@@ -1473,12 +1473,17 @@ class Ops:
                 continue
             await self.consume(spec)
 
-    async def apply_topology(self, topology: Topology, restore: bool | None = None):
+    @property
+    def consumers(self) -> list[Consumer]:
+        return list(self._consumers.values())
+
+    async def apply_topology(self, topology: Topology, consume: bool | None = None, restore: bool | None = None):
         """
         Apply entire topology declaration.
 
         Args:
             topology: Topology to apply.
+            consume: If `True`, start consuming according to the topology.
             restore: If `True`, restore on reconnect.
         """
         logger.info("apply topology[restore=%s] %s", topology, restore)
@@ -1489,8 +1494,10 @@ class Ops:
             await self.queue_declare(spec, restore=restore)
         for spec in topology.bindings:
             await self.bind(spec, restore=restore)
-        for spec in topology.consumers:
-            await self.consume(spec, restore=restore)
+        if consume:
+            for spec in topology.consumers:
+                if not next(filter(lambda consumer: consumer.spec == spec, self.consumers), None):
+                    await self.consume(spec, restore=restore)
 
     async def check_exists(
         self,

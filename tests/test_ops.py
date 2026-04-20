@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, MagicMock
 import aiormq
 import pytest
 
-from rmqaio import BindSpec, ConsumerSpec, ExchangeSpec, Ops, QueueSpec
+from rmqaio import BindSpec, ConsumerSpec, ExchangeSpec, Ops, QueueSpec, Topology
 
 
 @pytest.fixture
@@ -337,3 +337,59 @@ class TestOpsStopConsume:
         mock_channel.basic_cancel.assert_called_once()
         assert "test_tag" not in ops._consumers
         assert spec not in ops._topology.consumers
+
+
+class TestOpsApplyTopology:
+    @pytest.mark.asyncio
+    async def test_apply_topology(self, ops, mock_channel):
+        exchange_spec = ExchangeSpec(name="test_exchange")
+        queue_spec = QueueSpec(name="test_queue")
+        binding_spec = BindSpec(src="test_exchange", dst="test_queue", routing_key="test.key")
+
+        topology = Topology()
+        topology.exchanges.append(exchange_spec)
+        topology.queues.append(queue_spec)
+        topology.bindings.append(binding_spec)
+
+        await ops.apply_topology(topology)
+        mock_channel.exchange_declare.assert_called_once()
+        mock_channel.queue_declare.assert_called_once()
+        mock_channel.queue_bind.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_apply_topology_with_restore(self, ops, mock_channel):
+        exchange_spec = ExchangeSpec(name="test_exchange")
+        queue_spec = QueueSpec(name="test_queue")
+        binding_spec = BindSpec(src="test_exchange", dst="test_queue", routing_key="test.key")
+
+        topology = Topology()
+        topology.exchanges.append(exchange_spec)
+        topology.queues.append(queue_spec)
+        topology.bindings.append(binding_spec)
+
+        await ops.apply_topology(topology, restore=True)
+        assert exchange_spec in ops._topology.exchanges
+        assert queue_spec in ops._topology.queues
+        assert binding_spec in ops._topology.bindings
+
+    @pytest.mark.asyncio
+    async def test_apply_topology_with_consume(self, ops, mock_channel):
+        async def callback(channel, message):
+            pass
+
+        mock_channel.basic_consume = AsyncMock(return_value=MagicMock(consumer_tag="test_tag"))
+        mock_channel.basic_qos = AsyncMock()
+
+        exchange_spec = ExchangeSpec(name="test_exchange")
+        queue_spec = QueueSpec(name="test_queue")
+        binding_spec = BindSpec(src="test_exchange", dst="test_queue", routing_key="test.key")
+        consumer_spec = ConsumerSpec(queue="test_queue", callback=callback)
+
+        topology = Topology()
+        topology.exchanges.append(exchange_spec)
+        topology.queues.append(queue_spec)
+        topology.bindings.append(binding_spec)
+        topology.consumers.append(consumer_spec)
+
+        await ops.apply_topology(topology, consume=True)
+        mock_channel.basic_consume.assert_called_once()
