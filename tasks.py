@@ -37,3 +37,20 @@ def run_tests(c):
         "poetry run coverage report --data-file=artifacts/.coverage -m"
     )
     c.run(cmd)
+
+
+@task
+def build_docs(c):
+    """Build documentation."""
+
+    cmd = "poetry run mkdocs build -f docs/mkdocs.yml"
+    c.run(cmd)
+
+
+@task
+def run_docs(c):
+    """Run local HTTP server with documentation on http://localhost:8000."""
+
+    cmd = "poetry run python -m http.server -d docs/site"
+    print("Serving on http://localhost:8000...")
+    c.run(cmd)

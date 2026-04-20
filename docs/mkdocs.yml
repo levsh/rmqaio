@@ -1,11 +1,11 @@
 site_name: RMQaio
 
 nav:
-  - Руководство пользователя: index.md
-  - API справочник: api_reference.md
+  - User manual: index.md
+  - API reference: api_reference.md
 
 theme:
-  language: ru
+  language: en
   name: material
   palette:
     scheme: slate
@@ -30,9 +30,11 @@ plugins:
       handlers:
         python:
           options:
+            docstring_style: google
             docstring_section_style: list
             separate_signature: true
             line_length: 60
+            inherited_members: true
 
 extra_css:
   - css/extra.css
