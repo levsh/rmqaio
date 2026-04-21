@@ -40,6 +40,18 @@ Number = int | float
 """Numeric type alias for integers or floats."""
 
 
+class RmqAioError(Exception):
+    pass
+
+
+class ConnectionInvalidStateError(RmqAioError):
+    pass
+
+
+class OperationError(RmqAioError):
+    pass
+
+
 def _env_var_as_bool(env_var_name: str, default: bool = False) -> bool:
     """
     Retrieve an environment variable as a boolean.
@@ -388,7 +400,6 @@ class Connection:
         self._channel: aiormq.abc.AbstractChannel | None = None
         self._connected_event = asyncio.Event()
         self._closed_event = asyncio.Event()
-        self._closed_event.set()
         self._loop_task: asyncio.Task | None = None
         self._exc: BaseException | Exception | None = None
         self._callbacks: dict[str, Callable[[ConnectionState, ConnectionState], Awaitable]] = {}
@@ -461,7 +472,7 @@ class Connection:
 
     async def _start_loop(self):
         if self._state != ConnectionState.INITIAL:
-            raise Exception(_("invalid connection state"))
+            raise ConnectionInvalidStateError(_("invalid connection state"))
         if not self._loop_task:
             self._loop_task = asyncio.create_task(self._loop())
 
@@ -471,6 +482,7 @@ class Connection:
                 [
                     create_task(self._connected_event.wait()),
                     create_task(self._closed_event.wait()),
+                    create_task(wait([cast(asyncio.Task, self._loop_task)])),
                 ],
                 timeout=timeout,
             )
@@ -485,7 +497,7 @@ class Connection:
             raise self._exc
         if self._state == ConnectionState.CONNECTED:
             return
-        raise Exception(_("invalid connection state"))
+        raise ConnectionInvalidStateError(_("invalid connection state"))
 
     async def _start_refresh(self):
         await self._set_state(ConnectionState.REFRESHING)
@@ -523,7 +535,7 @@ class Connection:
             return
 
         if self._state in [ConnectionState.CLOSING, ConnectionState.CLOSED]:
-            raise Exception("can not reopen closed connection")
+            raise ConnectionInvalidStateError("can not reopen closed connection")
 
         await self._start_loop()
 
@@ -538,7 +550,7 @@ class Connection:
             timeout: Operation timeout in seconds.
         """
         if self._state in [ConnectionState.CLOSING, ConnectionState.CLOSED]:
-            raise Exception("can not refresh closed connection")
+            raise ConnectionInvalidStateError("can not refresh closed connection")
 
         if self._state != ConnectionState.CONNECTED:
             return
@@ -648,7 +660,6 @@ class Connection:
         try:
             retry_policy = self._open_retry_policy
             delay_iter = iter(retry_policy.delays if retry_policy else [])
-            self._closed_event.clear()
 
             while self._state not in [ConnectionState.CLOSING, ConnectionState.CLOSED]:
                 try:
@@ -707,7 +718,6 @@ class Connection:
                     self._exc = e
 
                     if not retry_policy or not retry_policy.is_retryable(e):
-                        logger.exception(_("%s connection error"), self)
                         break
 
                     try:
@@ -731,10 +741,11 @@ class Connection:
             self._channel = None
             self._loop_task = None
 
-            with suppress(RuntimeError):
+            if self._state == ConnectionState.CLOSING:
                 self._closed_event.set()
-
-            await self._set_state(ConnectionState.CLOSED)
+                await self._set_state(ConnectionState.CLOSED)
+            else:
+                await self._set_state(ConnectionState.INITIAL)
 
 
 @dataclass
@@ -875,7 +886,7 @@ class SharedConnection:
             Exception: If connection fails, is closed, or reopened after close.
         """
         if self._is_closed.is_set():
-            raise Exception("can not reopen closed connection")
+            raise ConnectionInvalidStateError("can not reopen closed connection")
 
         async with self._lock:
             if self._is_open.is_set():
@@ -1559,11 +1570,11 @@ class Ops:
         match spec:
             case BaseExchangeSpec():
                 if spec.kind == "read-only":
-                    raise ValueError("can not delete read-only exchange")
+                    raise OperationError("can not delete read-only exchange")
                 await self.exchange_delete(spec.name, timeout=timeout)
             case BaseQueueSpec():
                 if spec.kind == "read-only":
-                    raise ValueError("can not delete read-only queue")
+                    raise OperationError("can not delete read-only queue")
                 await self.queue_delete(spec.name, timeout=timeout)
             case _:
                 raise ValueError("invalid spec type")
@@ -1609,13 +1620,13 @@ class Ops:
             Exception: If declaring fails.
         """
         if spec.kind == "read-only":
-            raise ValueError("can not declare read-only exchange")
-
-        logger.info(_("declare[restore=%s, force=%s] %s"), restore, force, spec)
+            raise OperationError("can not declare read-only exchange")
 
         timeout_ = timeout if timeout is not None else self._timeout
 
         async def op():
+            logger.info(_("declare[restore=%s, force=%s] %s"), restore, force, spec)
+
             channel = await self._conn.channel(timeout=timeout_)
             await channel.exchange_declare(
                 spec.name,
@@ -1705,13 +1716,13 @@ class Ops:
             Exception: If declaring fails.
         """
         if spec.kind == "read-only":
-            raise ValueError("can not declare read-only queue")
-
-        logger.info(_("declare[restore=%s, force=%s] %s"), restore, force, spec)
+            raise OperationError("can not declare read-only queue")
 
         timeout_ = timeout if timeout is not None else self._timeout
 
         async def op():
+            logger.info(_("declare[restore=%s, force=%s] %s"), restore, force, spec)
+
             channel = await self._conn.channel(timeout=timeout_)
             arguments = spec.arguments.to_dict()
             await channel.queue_declare(

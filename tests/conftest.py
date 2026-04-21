@@ -14,24 +14,20 @@ from docker.errors import DockerException
 
 import rmqaio
 
-from rmqaio import logger
 from tests import utils
-
-
-logger.setLevel(logging.DEBUG)
-rmqaio.config.log_sanitize = False
 
 
 CWD = path.dirname(path.abspath(__file__))
 
+rmqaio.config.log_sanitize = False
 
 logger = logging.getLogger("rmqaio")
-
 log_frmt = logging.Formatter("%(asctime)s %(levelname)-8s %(name)s lineno:%(lineno)4d -- %(message)s")
 log_hndl = logging.StreamHandler(stream=sys.stdout)
 log_hndl.setFormatter(log_frmt)
 
 logger.addHandler(log_hndl)
+logger.setLevel(logging.DEBUG)
 
 
 @pytest.fixture(autouse=True)

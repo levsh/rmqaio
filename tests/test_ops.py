@@ -4,6 +4,7 @@ import aiormq
 import pytest
 
 from rmqaio import BindSpec, ConsumerSpec, ExchangeSpec, Ops, QueueSpec, Topology
+from rmqaio.rmqaio import OperationError
 
 
 @pytest.fixture
@@ -114,13 +115,13 @@ class TestOpsDelete:
     @pytest.mark.asyncio
     async def test_delete_read_only_exchange(self, ops):
         spec = ExchangeSpec(kind="read-only", name="test_exchange", type="direct")
-        with pytest.raises(ValueError, match="can not delete read-only exchange"):
+        with pytest.raises(OperationError, match="can not delete read-only exchange"):
             await ops.delete(spec)
 
     @pytest.mark.asyncio
     async def test_delete_read_only_queue(self, ops):
         spec = QueueSpec(kind="read-only", name="test_queue")
-        with pytest.raises(ValueError, match="can not delete read-only queue"):
+        with pytest.raises(OperationError, match="can not delete read-only queue"):
             await ops.delete(spec)
 
 
@@ -140,7 +141,7 @@ class TestOpsExchangeDeclare:
     @pytest.mark.asyncio
     async def test_exchange_declare_ro(self, ops):
         spec = ExchangeSpec(kind="read-only", name="test_exchange", type="direct")
-        with pytest.raises(ValueError, match="can not declare read-only exchange"):
+        with pytest.raises(OperationError, match="can not declare read-only exchange"):
             await ops.exchange_declare(spec)
 
 
@@ -183,7 +184,7 @@ class TestOpsQueueDeclare:
     @pytest.mark.asyncio
     async def test_queue_declare_ro(self, ops):
         spec = QueueSpec(kind="read-only", name="test_queue")
-        with pytest.raises(ValueError, match="can not declare read-only queue"):
+        with pytest.raises(OperationError, match="can not declare read-only queue"):
             await ops.queue_declare(spec)
 
 
