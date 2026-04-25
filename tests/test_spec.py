@@ -236,7 +236,7 @@ class TestBaseQueueArgs:
     def test_empty(self):
         args = BaseQueueArgs()
         result = args.to_dict()
-        assert result["x-queue-type"] == ""
+        assert result == {}
 
     def test_queue_type(self):
         args = BaseQueueArgs(queue_type="classic")

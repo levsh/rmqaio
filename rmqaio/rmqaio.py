@@ -1118,45 +1118,47 @@ class DelayedExchangeSpec(BaseExchangeSpec):
             raise ValueError("use DefaultExchangeSpec for default exchange instead of name=''")
 
 
-QueueType: TypeAlias = Literal["classic", "quorum", "stream"]
-
-OverflowPolicy: TypeAlias = Literal["drop-head", "reject-publish", "reject-publish-dlx"]
+QueueType = Literal["classic", "quorum", "stream"]
+OverflowPolicy = Literal["drop-head", "reject-publish", "reject-publish-dlx"]
+QueueMode = Literal["default", "lazy"]
 
 
 @dataclass(frozen=True, slots=True)
 class BaseQueueArgs:
-    """
-    Base queue arguments.
-
-    Attributes:
-        queue_type: Queue type (e.g., "classic", "quorum", "stream").
-        dead_letter_exchange: Dead letter exchange name.
-        dead_letter_routing_key: Dead letter routing key.
-        message_ttl: Message TTL in milliseconds.
-        max_length: Maximum queue length.
-        overflow: Overflow policy.
-        single_active_consumer: Enable single active consumer.
-        custom: Custom arguments.
-    """
-
-    queue_type: str = ""
-
+    queue_type: QueueType | None = None
+    message_ttl: int | None = None
+    expires: int | None = None
+    max_length: int | None = None
+    max_length_bytes: int | None = None
+    overflow: OverflowPolicy | None = None
     dead_letter_exchange: str | None = None
     dead_letter_routing_key: str | None = None
-
-    message_ttl: int | None = None
-    max_length: int | None = None
-
-    overflow: OverflowPolicy | None = None
-
+    max_priority: int | None = None
     single_active_consumer: bool | None = None
-
+    queue_mode: QueueMode | None = None
+    delivery_limit: int | None = None
     custom: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         args: dict[str, Any] = {}
 
-        args["x-queue-type"] = self.queue_type
+        if self.queue_type is not None:
+            args["x-queue-type"] = self.queue_type
+
+        if self.message_ttl is not None:
+            args["x-message-ttl"] = self.message_ttl
+
+        if self.expires is not None:
+            args["x-expires"] = self.expires
+
+        if self.max_length is not None:
+            args["x-max-length"] = self.max_length
+
+        if self.max_length_bytes is not None:
+            args["x-max-length-bytes"] = self.max_length_bytes
+
+        if self.overflow is not None:
+            args["x-overflow"] = self.overflow
 
         if self.dead_letter_exchange is not None:
             args["x-dead-letter-exchange"] = self.dead_letter_exchange
@@ -1164,19 +1166,19 @@ class BaseQueueArgs:
         if self.dead_letter_routing_key is not None:
             args["x-dead-letter-routing-key"] = self.dead_letter_routing_key
 
-        if self.message_ttl is not None:
-            args["x-message-ttl"] = self.message_ttl
-
-        if self.max_length is not None:
-            args["x-max-length"] = self.max_length
-
-        if self.overflow is not None:
-            args["x-overflow"] = self.overflow
+        if self.max_priority is not None:
+            args["x-max-priority"] = self.max_priority
 
         if self.single_active_consumer is not None:
             args["x-single-active-consumer"] = self.single_active_consumer
 
-        if self.custom is not None:
+        if self.queue_mode is not None:
+            args["x-queue-mode"] = self.queue_mode
+
+        if self.delivery_limit is not None:
+            args["x-delivery-limit"] = self.delivery_limit
+
+        if self.custom:
             args.update(self.custom)
 
         return args
@@ -1488,7 +1490,13 @@ class Ops:
     def consumers(self) -> list[Consumer]:
         return list(self._consumers.values())
 
-    async def apply_topology(self, topology: Topology, consume: bool | None = None, restore: bool | None = None):
+    async def apply_topology(
+        self,
+        topology: Topology,
+        consume: bool | None = None,
+        restore: bool | None = None,
+        force: bool | None = None,
+    ):
         """
         Apply entire topology declaration.
 
@@ -1500,9 +1508,9 @@ class Ops:
         logger.info("apply topology[restore=%s] %s", topology, restore)
 
         for spec in topology.exchanges:
-            await self.exchange_declare(spec, restore=restore)
+            await self.exchange_declare(spec, restore=restore, force=force)
         for spec in topology.queues:
-            await self.queue_declare(spec, restore=restore)
+            await self.queue_declare(spec, restore=restore, force=force)
         for spec in topology.bindings:
             await self.bind(spec, restore=restore)
         if consume:
@@ -1968,24 +1976,29 @@ class Ops:
 
     async def stop_consume(
         self,
-        consumer_tag: str,
+        consumer_tag: str | None = None,
         timeout: Number | None = None,
     ):
         """
         Stop consume.
 
         Args:
-            consumer_tag: Consumer tag.
+            consumer_tag: Consumer tag. If `None`, stop all consumers.
             timeout: Operation timeout. If `None`, uses the default timeout.
         """
-        if consumer_tag in self._consumers:
-            consumer = self._consumers.pop(consumer_tag)
-            if consumer.spec in self._topology.consumers:
-                self._topology.consumers.remove(consumer.spec)
-            if not consumer.channel.is_closed:
-                logger.info(_("stop consume %s"), consumer.spec)
-                timeout_ = timeout if timeout is not None else self._timeout
-                await consumer.channel.basic_cancel(consumer.consumer_tag, timeout=timeout_)
+        if consumer_tag:
+            tags = [consumer_tag]
+        else:
+            tags = list(self._consumers.keys())
+        for tag in tags:
+            if tag in self._consumers:
+                consumer = self._consumers.pop(tag)
+                if consumer.spec in self._topology.consumers:
+                    self._topology.consumers.remove(consumer.spec)
+                if not consumer.channel.is_closed:
+                    logger.info(_("stop consume %s"), consumer.spec)
+                    timeout_ = timeout if timeout is not None else self._timeout
+                    await consumer.channel.basic_cancel(consumer.consumer_tag, timeout=timeout_)
 
 
 @dataclass(frozen=True, slots=True)
@@ -2163,6 +2176,12 @@ class Queue:
     spec: BaseQueueSpec
     ops: Ops
 
+    _consumers: dict[str, Consumer] = field(init=False, default_factory=dict)
+
+    @property
+    def consumers(self) -> list[Consumer]:
+        return list(self._consumers.values())
+
     async def check_exists(self, timeout: Number | None = None) -> bool:
         """
         Check if queue exists.
@@ -2280,18 +2299,27 @@ class Queue:
             consumer_tag=consumer_tag,
             arguments=arguments or ConsumerArgs(),
         )
-        return await self.ops.consume(spec, timeout=timeout, restore=restore)
+        consumer = await self.ops.consume(spec, timeout=timeout, restore=restore)
+        self._consumers[consumer.consumer_tag] = consumer
+        return consumer
 
     async def stop_consume(
         self,
-        consumer_tag: str,
+        consumer_tag: str | None = None,
         timeout: Number | None = None,
     ):
         """
         Stop consume.
 
         Args:
-            consumer_tag: Consumer tag.
+            consumer_tag: Consumer tag. If `None`, stop all consumers.
             timeout: Operation timeout. If `None`, uses the default timeout.
         """
-        await self.ops.stop_consume(consumer_tag, timeout=timeout)
+        if consumer_tag in self._consumers:
+            consumer = self._consumers[consumer_tag]
+            await self.ops.stop_consume(consumer_tag, timeout=timeout)
+            self._consumers.pop(consumer.consumer_tag, None)
+        else:
+            for consumer in self.consumers:
+                await self.ops.stop_consume(consumer_tag, timeout=timeout)
+                self._consumers.pop(consumer.consumer_tag, None)
