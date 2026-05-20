@@ -308,6 +308,9 @@ class ConnectionState(StrEnum):
     CONNECTING = "connecting"
     """Connection is in the process of being established."""
 
+    RECONNECTING = "reconnecting"
+    """Connection is in the process of being established."""
+
     CONNECTED = "connected"
     """Connection is established and operational."""
 
@@ -396,6 +399,7 @@ class Connection:
 
         self._connect_timeout = self._extract_connect_timeout(url)
         self._state = ConnectionState.INITIAL
+        self._state_lock = asyncio.Lock()
         self._conn: aiormq.Connection | None = None
         self._channel: aiormq.abc.AbstractChannel | None = None
         self._connected_event = asyncio.Event()
@@ -529,7 +533,7 @@ class Connection:
         if self._state == ConnectionState.CONNECTED:
             return
 
-        if self._state in (ConnectionState.CONNECTING, ConnectionState.REFRESHING):
+        if self._state in (ConnectionState.CONNECTING, ConnectionState.RECONNECTING, ConnectionState.REFRESHING):
             await self._wait_open(timeout=timeout)
             self._check_open_result()
             return
@@ -651,9 +655,10 @@ class Connection:
                 callback_logger.exception(_("%s callback[name=%s, callback=%s] error"), self, name, callback)
 
     async def _set_state(self, state: ConnectionState):
-        state_from, state_to, self._state = self._state, state, state
-        if state_to != state_from:
-            await self._execute_callbacks(state_from, state_to)
+        async with self._state_lock:
+            state_from, state_to, self._state = self._state, state, state
+            if state_to != state_from:
+                await self._execute_callbacks(state_from, state_to)
 
     async def _loop(self):
         """Main connection loop that manages connection lifecycle."""
@@ -665,7 +670,10 @@ class Connection:
                 try:
                     logger.info(_("%s connecting[timeout=%s]..."), self, self._connect_timeout)
 
-                    await self._set_state(ConnectionState.CONNECTING)
+                    if self._state == ConnectionState.INITIAL:
+                        await self._set_state(ConnectionState.CONNECTING)
+                    else:
+                        await self._set_state(ConnectionState.RECONNECTING)
 
                     self._conn = cast(
                         aiormq.Connection,
@@ -677,11 +685,12 @@ class Connection:
 
                     self._channel = None
                     self._exc = None
+
                     self._connected_event.set()
 
-                    logger.info(_("%s connected"), self)
-
                     await self._set_state(ConnectionState.CONNECTED)
+
+                    logger.info(_("%s connected"), self)
 
                     retry_policy = self._reopen_retry_policy
                     delay_iter = iter(retry_policy.delays if retry_policy else [])
@@ -702,7 +711,7 @@ class Connection:
                     if self._state in [ConnectionState.CLOSING, ConnectionState.CLOSED]:
                         break
                     if self._state == ConnectionState.REFRESHING:
-                        logger.warning(_("%s refreshing"), self)
+                        logger.info(_("%s refreshing"), self)
                     else:
                         logger.warning(_("%s connection lost"), self)
 
@@ -888,9 +897,10 @@ class SharedConnection:
         if self._is_closed.is_set():
             raise ConnectionInvalidStateError("can not reopen closed connection")
 
+        if self._is_open.is_set():
+            return
+
         async with self._lock:
-            if self._is_open.is_set():
-                return
             await self._conn.open(timeout=timeout)
             self._is_open.set()
             self._shared_item.refs += 1
@@ -1468,23 +1478,23 @@ class Ops:
         )
 
     async def _on_connection_state_changed(self, state_from: ConnectionState, state_to: ConnectionState):
-        if state_to == ConnectionState.CONNECTED and state_from != ConnectionState.INITIAL:
+        if state_to == ConnectionState.CONNECTED and state_from != ConnectionState.CONNECTING:
             await self._restore_topology()
 
     async def _restore_topology(self):
         for spec in self._topology.exchanges:
-            await self.exchange_declare(spec)
+            await self.exchange_declare(spec, restore=True)
         for spec in self._topology.queues:
-            await self.queue_declare(spec)
+            await self.queue_declare(spec, restore=True)
         for spec in self._topology.bindings:
-            await self.bind(spec)
+            await self.bind(spec, restore=True)
 
         consumers_map = {consumer.spec: consumer for consumer in self._consumers.values()}
         for spec in self._topology.consumers:
             consumer = consumers_map.get(spec)
             if consumer and not consumer.channel.is_closed:
                 continue
-            await self.consume(spec)
+            await self.consume(spec, restore=True)
 
     @property
     def consumers(self) -> list[Consumer]:
@@ -1505,7 +1515,7 @@ class Ops:
             consume: If `True`, start consuming according to the topology.
             restore: If `True`, restore on reconnect.
         """
-        logger.info("apply topology[restore=%s] %s", topology, restore)
+        logger.info("apply topology[restore=%s] %s", restore, topology)
 
         for spec in topology.exchanges:
             await self.exchange_declare(spec, restore=restore, force=force)
@@ -1795,7 +1805,8 @@ class Ops:
             restore: Restore this binding on connection issue.
         """
         logger.info(
-            _("bind %s '%s' to exchange '%s' with routing_key '%s'"),
+            _("bind[restore=%s] %s '%s' to exchange '%s' with routing_key '%s'"),
+            restore,
             spec.kind,
             spec.dst,
             spec.src,
@@ -1963,7 +1974,7 @@ class Ops:
             ).consumer_tag,
         )
 
-        logger.info(_("consume %s"), spec)
+        logger.info(_("consume[restore=%s] %s"), restore, spec)
 
         consumer = Consumer(spec, consumer_tag, channel)
 
