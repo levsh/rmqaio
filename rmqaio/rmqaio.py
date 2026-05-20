@@ -701,7 +701,7 @@ class Connection:
 
                     if self._state in [ConnectionState.CLOSING, ConnectionState.CLOSED]:
                         break
-                    elif self._state == ConnectionState.REFRESHING:
+                    if self._state == ConnectionState.REFRESHING:
                         logger.warning(_("%s refreshing"), self)
                     else:
                         logger.warning(_("%s connection lost"), self)
@@ -855,12 +855,12 @@ class SharedConnection:
     @property
     def open_retry_policy(self) -> RetryPolicy | None:
         """Reconnection policy for handling first connection errors."""
-        return self._conn._open_retry_policy
+        return self._conn.open_retry_policy
 
     @property
     def reopen_retry_policy(self) -> RetryPolicy | None:
         """Reconnection policy for handling reconnection errors."""
-        return self._conn._reopen_retry_policy
+        return self._conn.reopen_retry_policy
 
     @property
     def is_open(self) -> bool:
@@ -1427,10 +1427,10 @@ class Topology:
         consumers: List of consumer specifications.
     """
 
-    exchanges: UniqueList[BaseExchangeSpec] = field(default_factory=lambda: UniqueList[BaseExchangeSpec]())
-    queues: UniqueList[BaseQueueSpec] = field(default_factory=lambda: UniqueList[BaseQueueSpec]())
-    bindings: UniqueList[BindSpec] = field(default_factory=lambda: UniqueList[BindSpec]())
-    consumers: UniqueList[ConsumerSpec] = field(default_factory=lambda: UniqueList[ConsumerSpec]())
+    exchanges: UniqueList[BaseExchangeSpec] = field(default_factory=UniqueList[BaseExchangeSpec])
+    queues: UniqueList[BaseQueueSpec] = field(default_factory=UniqueList[BaseQueueSpec])
+    bindings: UniqueList[BindSpec] = field(default_factory=UniqueList[BindSpec])
+    consumers: UniqueList[ConsumerSpec] = field(default_factory=UniqueList[ConsumerSpec])
 
 
 class Ops:
@@ -1515,7 +1515,7 @@ class Ops:
             await self.bind(spec, restore=restore)
         if consume:
             for spec in topology.consumers:
-                if not next(filter(lambda consumer: consumer.spec == spec, self.consumers), None):
+                if not next((consumer for consumer in self.consumers if consumer.spec == spec), None):
                     await self.consume(spec, restore=restore)
 
     async def check_exists(
