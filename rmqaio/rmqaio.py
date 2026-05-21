@@ -852,6 +852,14 @@ class SharedConnection:
         await self.close()
 
     @property
+    def connection(self) -> Connection:
+        return self._conn
+
+    @classmethod
+    def get_all_connections(cls) -> list[Connection]:
+        return list(set(item.conn for item in cls._shared.values()))
+
+    @property
     def url(self) -> str:
         """Connection URL."""
         return self._conn.url
@@ -1477,6 +1485,10 @@ class Ops:
             self._on_connection_state_changed,
         )
 
+    @property
+    def conn(self) -> ConnectionProtocol:
+        return self._conn
+
     async def _on_connection_state_changed(self, state_from: ConnectionState, state_to: ConnectionState):
         if state_to == ConnectionState.CONNECTED and state_from != ConnectionState.CONNECTING:
             await self._restore_topology()
@@ -1485,7 +1497,14 @@ class Ops:
         for spec in self._topology.exchanges:
             await self.exchange_declare(spec, restore=True)
         for spec in self._topology.queues:
-            await self.queue_declare(spec, restore=True)
+            await retry(
+                RetryPolicy(
+                    delays=[0.05, 0.05, 0.05],
+                    exc_filter=(aiormq.exceptions.ChannelLockedResource,),
+                )
+            )(
+                self.queue_declare
+            )(spec, restore=True)
         for spec in self._topology.bindings:
             await self.bind(spec, restore=True)
 
@@ -1713,6 +1732,20 @@ class Ops:
             return True
         except aiormq.ChannelNotFoundEntity:
             return False
+
+    async def get_queue(self, name: str, timeout: Number | None = None):
+        """
+        Get queue.
+
+        Args:
+            name: Queue name.
+            timeout: Operation timeout. If `None`, uses the default timeout.
+        """
+        timeout_ = timeout if timeout is not None else self._timeout
+
+        channel = await self._conn.channel(timeout=timeout_)
+
+        return await channel.queue_declare(name, passive=True, timeout=timeout_)
 
     async def queue_declare(
         self,
