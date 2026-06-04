@@ -9,11 +9,25 @@ from collections.abc import Hashable, MutableSequence
 from contextlib import suppress
 from dataclasses import dataclass, field
 from enum import StrEnum
-from functools import partial, wraps
+from functools import wraps
 from os import environ
 from pathlib import Path
 from ssl import SSLContext
-from typing import Any, Awaitable, Callable, Generic, Iterable, Literal, Protocol, TypeAlias, TypeVar, cast, overload
+from typing import (
+    Any,
+    Awaitable,
+    Callable,
+    Coroutine,
+    Generic,
+    Iterable,
+    Literal,
+    ParamSpec,
+    Protocol,
+    TypeAlias,
+    TypeVar,
+    cast,
+    overload,
+)
 from uuid import uuid4
 
 import aiormq
@@ -41,15 +55,15 @@ Number = int | float
 
 
 class RmqAioError(Exception):
-    pass
+    """Base exception for all rmqaio errors."""
 
 
 class ConnectionInvalidStateError(RmqAioError):
-    pass
+    """Raised when an operation is attempted in an invalid connection state."""
 
 
 class OperationError(RmqAioError):
-    pass
+    """Raised when an operation is not allowed on a read-only entity."""
 
 
 def _env_var_as_bool(env_var_name: str, default: bool = False) -> bool:
@@ -96,7 +110,7 @@ def _env_var_as_int(env_var_name: str, default: int) -> int:
         raise ValueError(_("invalid value '{}' for environment variable {}").format(value, env_var_name))
 
 
-def _as_int_or_none(value) -> int | None:
+def _as_int_or_none(value: Any) -> int | None:
     """
     Convert a value to int or return None if conversion fails.
 
@@ -133,6 +147,31 @@ class Config:
 config = Config()
 
 
+class _ReentrantLock:
+    """Reentrant asyncio lock. Same task can acquire it multiple times."""
+
+    def __init__(self):
+        self._lock = asyncio.Lock()
+        self._owner: asyncio.Task | None = None
+        self._count = 0
+
+    async def __aenter__(self):
+        task = asyncio.current_task()
+        if task is self._owner:
+            self._count += 1
+            return self
+        await self._lock.__aenter__()
+        self._owner = task
+        self._count = 1
+        return self
+
+    async def __aexit__(self, *args):
+        self._count -= 1
+        if self._count == 0:
+            self._owner = None
+            await self._lock.__aexit__(*args)
+
+
 class Repeat:
     """
     Represents a fixed delay value for retry operations.
@@ -167,11 +206,15 @@ class Repeat:
     def __hash__(self):
         return hash((self.__class__, float(self.value)))
 
-    def __eq__(self, other):
-        return other.__class__ == Repeat and self.value == other.value
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, Repeat):
+            return NotImplemented
+        return self.value == other.value
 
-    def __ne__(self, other):
-        return other.__class__ != Repeat or self.value != other.value
+    def __ne__(self, other: object) -> bool:
+        if not isinstance(other, Repeat):
+            return NotImplemented
+        return self.value != other.value
 
 
 Delay: TypeAlias = list[Number] | Repeat
@@ -221,12 +264,15 @@ class RetryPolicy:
         return isinstance(e, self.exc_filter)
 
 
+P = ParamSpec("P")
+
+
 def retry(
     retry_policy: RetryPolicy,
     *,
     msg: str | None = None,
     on_error: Callable[[Exception], Awaitable] | None = None,
-):
+) -> Callable[[Callable[P, Awaitable]], Callable[P, Awaitable]]:
     """
     Create a retry decorator for async functions.
 
@@ -399,13 +445,13 @@ class Connection:
 
         self._connect_timeout = self._extract_connect_timeout(url)
         self._state = ConnectionState.INITIAL
-        self._state_lock = asyncio.Lock()
+        self._state_lock = _ReentrantLock()
         self._conn: aiormq.Connection | None = None
         self._channel: aiormq.abc.AbstractChannel | None = None
         self._connected_event = asyncio.Event()
         self._closed_event = asyncio.Event()
         self._loop_task: asyncio.Task | None = None
-        self._exc: BaseException | Exception | None = None
+        self._exc: BaseException | None = None
         self._callbacks: dict[str, Callable[[ConnectionState, ConnectionState], Awaitable]] = {}
 
     def _extract_connect_timeout(self, url: str) -> int | None:
@@ -419,9 +465,9 @@ class Connection:
             Connection timeout in seconds, or None if not specified.
         """
         value = _as_int_or_none(yarl.URL(url).query.get("connection_timeout"))
-        if value:
-            value /= 1000  # milliseconds to seconds
-        return cast(int, value)
+        if value is not None:
+            return value // 1000  # milliseconds to seconds
+        return None
 
     def __str__(self):
         url = yarl.URL(self._url)
@@ -436,7 +482,7 @@ class Connection:
         await self.open()
         return self
 
-    async def __aexit__(self, exc_type, exc, tb):
+    async def __aexit__(self, exc_type: type[BaseException] | None, exc: BaseException | None, tb: object):
         await self.close()
 
     @property
@@ -456,12 +502,12 @@ class Connection:
 
     @property
     def open_retry_policy(self) -> RetryPolicy | None:
-        """Reconnection policy for handling first connection errors."""
+        """Policy for first connection attempts. `None` means no retries."""
         return self._open_retry_policy
 
     @property
     def reopen_retry_policy(self) -> RetryPolicy | None:
-        """Reconnection policy for handling reconnection errors."""
+        """Policy for reconnection attempts. `None` means no retries."""
         return self._reopen_retry_policy
 
     @property
@@ -471,7 +517,7 @@ class Connection:
 
     @property
     def is_closed(self) -> bool:
-        """Whether connection is closed."""
+        """Whether connection is closed or in the process of closing."""
         return self._state in [ConnectionState.CLOSED, ConnectionState.CLOSING]
 
     async def _start_loop(self):
@@ -491,10 +537,14 @@ class Connection:
                 timeout=timeout,
             )
         )[0]
-        if not done and self._loop_task:
-            self._loop_task.cancel()
-            with suppress(CancelledError):
-                await self._loop_task
+        if self._loop_task:
+            if not done:
+                self._loop_task.cancel()
+                with suppress(CancelledError):
+                    await self._loop_task
+            if self._loop_task.done() and not self._loop_task.cancelled():
+                with suppress(Exception):
+                    self._loop_task.result()
 
     def _check_open_result(self):
         if self._exc:
@@ -524,8 +574,8 @@ class Connection:
         """
         Open connection to RabbitMQ.
 
-        Establishes connection to RabbitMQ broker. If connection is lost,
-        automatically attempts to reconnect based on retry policy.
+        Establishes connection to RabbitMQ broker. Reconnection on connection
+        loss is handled automatically by the internal loop.
 
         Args:
             timeout: Operation timeout in seconds.
@@ -571,7 +621,7 @@ class Connection:
         Args:
             timeout: Operation timeout in seconds.
         """
-        if self._state in (ConnectionState.CLOSING, ConnectionState.CLOSED):
+        if self._state in [ConnectionState.CLOSING, ConnectionState.CLOSED]:
             return
 
         await self._start_close()
@@ -643,7 +693,7 @@ class Connection:
         """
         for name, callback in list(self._callbacks.items()):
             callback_logger.debug(
-                _("%s execute callback[name=%s] %s -> %s"),
+                _("%s executing callback[name=%s] %s -> %s"),
                 self,
                 name,
                 state_from,
@@ -693,7 +743,7 @@ class Connection:
                     logger.info(_("%s connected"), self)
 
                     retry_policy = self._reopen_retry_policy
-                    delay_iter = iter(retry_policy.delays if retry_policy else [])
+                    delay_iter = iter(retry_policy.delays)
 
                     aws = [self._conn.closing, create_task(self._closed_event.wait())]
                     while True:
@@ -735,11 +785,12 @@ class Connection:
                         break
 
                     logger.warning(_("%s %s %s"), self, e.__class__, e)
-                    logger.info(_("%s reconnecting in %.1f seconds"), self, delay)
+                    logger.info(_("%s reconnect in %.1f seconds"), self, delay)
 
                     await sleep(delay)
 
         except Exception as e:
+            self._exc = e
             logger.exception(e)
 
         finally:
@@ -848,15 +899,17 @@ class SharedConnection:
         await self.open()
         return self
 
-    async def __aexit__(self, exc_type, exc, tb):
+    async def __aexit__(self, exc_type: type[BaseException] | None, exc: BaseException | None, tb: object):
         await self.close()
 
     @property
     def connection(self) -> Connection:
+        """Underlying Connection instance shared by all references."""
         return self._conn
 
     @classmethod
     def get_all_connections(cls) -> list[Connection]:
+        """Return all unique underlying Connection instances."""
         return list(set(item.conn for item in cls._shared.values()))
 
     @property
@@ -871,12 +924,12 @@ class SharedConnection:
 
     @property
     def open_retry_policy(self) -> RetryPolicy | None:
-        """Reconnection policy for handling first connection errors."""
+        """Policy for first connection attempts. `None` means no retries."""
         return self._conn.open_retry_policy
 
     @property
     def reopen_retry_policy(self) -> RetryPolicy | None:
-        """Reconnection policy for handling reconnection errors."""
+        """Policy for reconnection attempts. `None` means no retries."""
         return self._conn.reopen_retry_policy
 
     @property
@@ -893,14 +946,14 @@ class SharedConnection:
         """
         Open connection to RabbitMQ.
 
-        Establishes connection to RabbitMQ broker. If connection is lost,
-        automatically attempts to reconnect based on retry policy.
+        Establishes connection to RabbitMQ broker. Reconnection on connection
+        loss is handled automatically by the internal loop.
 
         Args:
             timeout: Operation timeout in seconds.
 
         Raises:
-            Exception: If connection fails, is closed, or reopened after close.
+            ConnectionInvalidStateError: If the connection has already been closed.
         """
         if self._is_closed.is_set():
             raise ConnectionInvalidStateError("can not reopen closed connection")
@@ -949,7 +1002,7 @@ class SharedConnection:
             A new RabbitMQ channel.
         """
         await self.open()
-        return await cast(Connection, self._conn).new_channel(timeout=timeout)
+        return await self._conn.new_channel(timeout=timeout)
 
     async def channel(self, timeout: Number | None = None) -> aiormq.abc.AbstractChannel:
         """
@@ -996,6 +1049,8 @@ ExchangeType: TypeAlias = Literal["direct", "fanout", "topic", "headers"]
 
 
 class Spec(Protocol):
+    """Protocol for entities that have a kind and a name."""
+
     @property
     def kind(self) -> str: ...
 
@@ -1112,9 +1167,22 @@ DelayedExchangeType: TypeAlias = Literal["direct", "fanout", "topic"]
 
 @dataclass(frozen=True, slots=True)
 class DelayedExchangeArgs(BaseExchangeArgs):
+    """
+    Arguments for a delayed exchange.
+
+    Attributes:
+        delayed_type: Underlying exchange type for the delayed message plugin.
+    """
+
     delayed_type: DelayedExchangeType = "direct"
 
     def to_dict(self) -> dict[str, Any]:
+        """
+        Convert arguments to a dictionary.
+
+        Returns:
+            Dictionary with x-delayed-type and inherited arguments.
+        """
         args = BaseExchangeArgs.to_dict(self)
         args["x-delayed-type"] = self.delayed_type
         return args
@@ -1122,6 +1190,19 @@ class DelayedExchangeArgs(BaseExchangeArgs):
 
 @dataclass(frozen=True, slots=True)
 class DelayedExchangeSpec(BaseExchangeSpec):
+    """
+    Specification for a delayed exchange (x-delayed-message plugin).
+
+    Attributes:
+        name: Exchange name.
+        kind: Exchange kind ("normal" or "read-only").
+        type: Always "x-delayed-message".
+        durable: Whether exchange is durable.
+        auto_delete: Whether to delete when no longer used.
+        internal: Whether exchange is internal.
+        arguments: Delayed exchange arguments.
+    """
+
     name: str
     kind: Literal["normal", "read-only"] = field(default="normal")
     type: Literal["x-delayed-message"] = field(init=False, default="x-delayed-message")
@@ -1143,6 +1224,25 @@ QueueMode = Literal["default", "lazy"]
 
 @dataclass(frozen=True, slots=True)
 class BaseQueueArgs:
+    """
+    Base queue arguments.
+
+    Attributes:
+        queue_type: Queue type (classic, quorum, or stream).
+        message_ttl: Time-to-live for messages in milliseconds.
+        expires: Queue expiry in milliseconds after last use.
+        max_length: Maximum number of messages in the queue.
+        max_length_bytes: Maximum queue size in bytes.
+        overflow: Overflow behaviour when max length is reached.
+        dead_letter_exchange: Exchange to route dead letters to.
+        dead_letter_routing_key: Routing key for dead letters.
+        max_priority: Maximum priority for priority queues.
+        single_active_consumer: Enables single active consumer.
+        queue_mode: Queue mode (default or lazy).
+        delivery_limit: Maximum number of delivery attempts.
+        custom: Custom x-arguments for the queue.
+    """
+
     queue_type: QueueType | None = None
     message_ttl: int | None = None
     expires: int | None = None
@@ -1158,6 +1258,12 @@ class BaseQueueArgs:
     custom: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
+        """
+        Convert queue arguments to a dictionary of AMQP x-arguments.
+
+        Returns:
+            Dictionary with x-* keys for RabbitMQ queue declaration.
+        """
         args: dict[str, Any] = {}
 
         if self.queue_type is not None:
@@ -1323,7 +1429,7 @@ class ConsumerSpec:
     """
 
     queue: str
-    callback: Callable[[aiormq.abc.AbstractChannel, aiormq.abc.DeliveredMessage], Awaitable]
+    callback: Callable[[aiormq.abc.AbstractChannel, aiormq.abc.DeliveredMessage], Coroutine[Any, Any, Any]]
     prefetch_count: int | None = None
     prefetch_size: int | None = None
     auto_ack: bool = True
@@ -1353,6 +1459,18 @@ T = TypeVar("T", bound=Hashable)
 
 
 class UniqueList(MutableSequence[T], Generic[T]):
+    """
+    A list that enforces uniqueness of its elements.
+
+    Maintains insertion order and uses a dict internally for O(1) membership
+    tests. Only hashable items are supported.
+
+    Examples:
+        >>> ul = UniqueList([1, 2, 2, 3])
+        >>> list(ul)
+        [1, 2, 3]
+    """
+
     def __init__(self, iterable: Iterable[T] | None = None):
         self._data: dict[T, None] = {}
         if iterable is not None:
@@ -1374,10 +1492,17 @@ class UniqueList(MutableSequence[T], Generic[T]):
             return keys[index]
         return keys[index]
 
-    def __setitem__(self, index, value):
+    @overload
+    def __setitem__(self, index: int, value: T) -> None: ...
+
+    @overload
+    def __setitem__(self, index: slice, value: Iterable[T]) -> None: ...
+
+    def __setitem__(self, index: int | slice, value: T | Iterable[T]) -> None:
         if isinstance(index, slice):
             raise TypeError("slice assignment is not supported")
 
+        value = cast(T, value)
         keys = list(self._data)
 
         keys.pop(index)
@@ -1390,12 +1515,18 @@ class UniqueList(MutableSequence[T], Generic[T]):
         keys.insert(index, value)
         self._data = dict.fromkeys(keys)
 
-    def __delitem__(self, index):
+    @overload
+    def __delitem__(self, index: int) -> None: ...
+
+    @overload
+    def __delitem__(self, index: slice) -> None: ...
+
+    def __delitem__(self, index: int | slice) -> None:
         keys = list(self._data)
         del keys[index]
         self._data = dict.fromkeys(keys)
 
-    def insert(self, index, value):
+    def insert(self, index: int, value: T):
         keys = list(self._data)
 
         try:
@@ -1406,10 +1537,10 @@ class UniqueList(MutableSequence[T], Generic[T]):
         keys.insert(index, value)
         self._data = dict.fromkeys(keys)
 
-    def append(self, value):
+    def append(self, value: T):
         self._data[value] = None
 
-    def remove(self, value):
+    def remove(self, value: T):
         try:
             del self._data[value]
         except KeyError:
@@ -1487,6 +1618,7 @@ class Ops:
 
     @property
     def conn(self) -> ConnectionProtocol:
+        """Connection to RabbitMQ."""
         return self._conn
 
     async def _on_connection_state_changed(self, state_from: ConnectionState, state_to: ConnectionState):
@@ -1517,6 +1649,7 @@ class Ops:
 
     @property
     def consumers(self) -> list[Consumer]:
+        """Currently active consumers."""
         return list(self._consumers.values())
 
     async def apply_topology(
@@ -1533,8 +1666,9 @@ class Ops:
             topology: Topology to apply.
             consume: If `True`, start consuming according to the topology.
             restore: If `True`, restore on reconnect.
+            force: If `True`, delete and redeclare on parameter mismatch.
         """
-        logger.info("apply topology[restore=%s] %s", restore, topology)
+        logger.info("applying topology[restore=%s] %s", restore, topology)
 
         for spec in topology.exchanges:
             await self.exchange_declare(spec, restore=restore, force=force)
@@ -1581,10 +1715,11 @@ class Ops:
         Declare subj.
 
         Args:
+            spec: Specification of the exchange or queue to declare.
+            timeout: Operation timeout. If `None`, uses the default timeout.
             restore: If `True`, automatically redeclare subj after reconnection.
             force: If `True`, delete and redeclare subj if declaration fails
                 due to parameter mismatch.
-            timeout: Operation timeout. If `None`, uses the default timeout.
         """
         match spec:
             case BaseExchangeSpec():
@@ -1662,7 +1797,7 @@ class Ops:
         timeout_ = timeout if timeout is not None else self._timeout
 
         async def op():
-            logger.info(_("declare[restore=%s, force=%s] %s"), restore, force, spec)
+            logger.info(_("declaring[restore=%s, force=%s] %s"), restore, force, spec)
 
             channel = await self._conn.channel(timeout=timeout_)
             await channel.exchange_declare(
@@ -1678,7 +1813,7 @@ class Ops:
 
             async def on_error(e):
                 channel = await self._conn.channel(timeout=timeout_)
-                logger.info(_("delete[on_error] %s"), spec)
+                logger.info(_("deleting[on_error] %s"), spec)
                 await channel.exchange_delete(spec.name, timeout=timeout_)
 
             await retry(
@@ -1700,7 +1835,7 @@ class Ops:
             name: Exchange name.
             timeout: Operation timeout. If `None`, uses the default timeout.
         """
-        logger.info(_("delete exchange '%s'"), name)
+        logger.info(_("deleting exchange '%s'"), name)
 
         timeout_ = timeout if timeout is not None else self._timeout
 
@@ -1735,11 +1870,14 @@ class Ops:
 
     async def get_queue(self, name: str, timeout: Number | None = None):
         """
-        Get queue.
+        Get queue declare info.
 
         Args:
             name: Queue name.
             timeout: Operation timeout. If `None`, uses the default timeout.
+
+        Returns:
+            Queue declare OK result from the broker.
         """
         timeout_ = timeout if timeout is not None else self._timeout
 
@@ -1772,7 +1910,7 @@ class Ops:
         timeout_ = timeout if timeout is not None else self._timeout
 
         async def op():
-            logger.info(_("declare[restore=%s, force=%s] %s"), restore, force, spec)
+            logger.info(_("declaring[restore=%s, force=%s] %s"), restore, force, spec)
 
             channel = await self._conn.channel(timeout=timeout_)
             arguments = spec.arguments.to_dict()
@@ -1789,7 +1927,7 @@ class Ops:
 
             async def on_error(e):
                 channel = await self._conn.channel(timeout=timeout_)
-                logger.info(_("delete[on_error] %s"), spec)
+                logger.info(_("deleting[on_error] %s"), spec)
                 await channel.queue_delete(spec.name, timeout=timeout_)
 
             await retry(
@@ -1811,7 +1949,7 @@ class Ops:
             name: Queue name.
             timeout: Operation timeout. If `None`, uses the default timeout.
         """
-        logger.info(_("delete queue '%s'"), name)
+        logger.info(_("deleting queue '%s'"), name)
 
         timeout_ = timeout if timeout is not None else self._timeout
 
@@ -1838,7 +1976,7 @@ class Ops:
             restore: Restore this binding on connection issue.
         """
         logger.info(
-            _("bind[restore=%s] %s '%s' to exchange '%s' with routing_key '%s'"),
+            _("binding[restore=%s] %s '%s' to exchange '%s' with routing_key '%s'"),
             restore,
             spec.kind,
             spec.dst,
@@ -1883,7 +2021,7 @@ class Ops:
             timeout: Operation timeout. If `None`, uses the default timeout.
         """
         logger.info(
-            _("unbind %s '%s' from exchange '%s' for routing_key '%s'"),
+            _("unbinding %s '%s' from exchange '%s' for routing_key '%s'"),
             spec.kind,
             spec.dst,
             spec.src,
@@ -1919,7 +2057,7 @@ class Ops:
         exchange: str,
         data: bytes,
         routing_key: str,
-        properties: dict | None = None,
+        properties: dict[str, Any] | None = None,
         mandatory: bool = False,
         timeout: Number | None = None,
     ):
@@ -1940,7 +2078,7 @@ class Ops:
 
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug(
-                _("exchange[name='%s'] %s channel[%s] publish[routing_key='%s'] %s"),
+                _("exchange[name='%s'] %s channel[%s] publishing[routing_key='%s'] %s"),
                 exchange,
                 self._conn,
                 channel,
@@ -1997,7 +2135,7 @@ class Ops:
             (
                 await channel.basic_consume(
                     spec.queue,
-                    partial(spec.callback, channel),
+                    lambda msg: spec.callback(channel, msg),
                     no_ack=spec.auto_ack,
                     exclusive=spec.exclusive,
                     arguments=spec.arguments.to_dict(),
@@ -2007,7 +2145,7 @@ class Ops:
             ).consumer_tag,
         )
 
-        logger.info(_("consume[restore=%s] %s"), restore, spec)
+        logger.info(_("consuming[restore=%s] %s"), restore, spec)
 
         consumer = Consumer(spec, consumer_tag, channel)
 
@@ -2040,7 +2178,7 @@ class Ops:
                 if consumer.spec in self._topology.consumers:
                     self._topology.consumers.remove(consumer.spec)
                 if not consumer.channel.is_closed:
-                    logger.info(_("stop consume %s"), consumer.spec)
+                    logger.info(_("stop consuming %s"), consumer.spec)
                     timeout_ = timeout if timeout is not None else self._timeout
                     await consumer.channel.basic_cancel(consumer.consumer_tag, timeout=timeout_)
 
@@ -2062,7 +2200,7 @@ class DefaultExchange:
         self,
         data: bytes,
         routing_key: str,
-        properties: dict | None = None,
+        properties: dict[str, Any] | None = None,
         mandatory: bool = False,
         timeout: Number | None = None,
     ):
@@ -2182,7 +2320,7 @@ class Exchange:
         self,
         data: bytes,
         routing_key: str,
-        properties: dict | None = None,
+        properties: dict[str, Any] | None = None,
         mandatory: bool = False,
         timeout: Number | None = None,
     ):
@@ -2224,6 +2362,7 @@ class Queue:
 
     @property
     def consumers(self) -> list[Consumer]:
+        """Consumers attached to this queue."""
         return list(self._consumers.values())
 
     async def check_exists(self, timeout: Number | None = None) -> bool:
@@ -2306,7 +2445,7 @@ class Queue:
 
     async def consume(
         self,
-        callback: Callable[[aiormq.abc.AbstractChannel, aiormq.abc.DeliveredMessage], Awaitable],
+        callback: Callable[[aiormq.abc.AbstractChannel, aiormq.abc.DeliveredMessage], Coroutine[Any, Any, Any]],
         prefetch_count: int | None = None,
         prefetch_size: int | None = None,
         auto_ack: bool = True,
@@ -2363,7 +2502,7 @@ class Queue:
             consumer = self._consumers[consumer_tag]
             await self.ops.stop_consume(consumer_tag, timeout=timeout)
             self._consumers.pop(consumer.consumer_tag, None)
-        else:
+        elif consumer_tag is None:
             for consumer in self.consumers:
-                await self.ops.stop_consume(consumer_tag, timeout=timeout)
+                await self.ops.stop_consume(consumer.consumer_tag, timeout=timeout)
                 self._consumers.pop(consumer.consumer_tag, None)

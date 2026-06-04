@@ -28,7 +28,7 @@ class TestOpsInit:
         Ops(mock_conn)
         mock_conn.set_callback.assert_called_once()
         callback_name = mock_conn.set_callback.call_args[0][0]
-        assert "on_state_changed" in callback_name
+        assert "on_connection_state_changed" in callback_name
 
 
 class TestOpsCheckExists:

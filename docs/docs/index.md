@@ -107,17 +107,56 @@ assert ch1 is not ch2
 
 ### SharedConnection
 
-Shares connection across multiple instances:
+Shares a single underlying connection across multiple instances. The connection is established by the first instance that calls `open()` and closed when all instances have called `close()`:
 
 ```python
-from rmqaio import SharedConnection, Ops
+from rmqaio import SharedConnection
 
 conn1 = SharedConnection("amqp://localhost")
-
 conn2 = SharedConnection("amqp://localhost")
 
+await conn1.open()
+await conn2.open()
+
 # conn1 and conn2 share the same underlying connection
+
+await conn1.close()
+await conn2.close()  # underlying connection closes only after last close
 ```
+
+### Graceful Shutdown
+
+```python
+await conn.close()
+```
+
+Or use context manager:
+
+```python
+async with Connection("amqp://localhost") as conn:
+    pass  # work with connection
+```
+
+## Connection Callbacks
+
+Subscribe to connection state changes:
+
+```python
+async def on_state_change(state_from, state_to):
+    print(f"Connection: {state_from} -> {state_to}")
+
+conn.set_callback("state_handler", on_state_change)
+await conn.remove_callback("state_handler")
+```
+
+### Connection States
+
+- `INITIAL` - Connection created
+- `CONNECTING` - Connecting to broker
+- `CONNECTED` - Connected and operational
+- `REFRESHING` - Refreshing connection
+- `CLOSING` - Closing connection
+- `CLOSED` - Connection closed
 
 ## Retry Policy
 
@@ -134,8 +173,14 @@ policy = RetryPolicy(
 
 ### Parameters
 
-- **`delays`** - Delays for retry attempts.
-- **`exc_filter`** - Exception types or callable to filter retriable exceptions.
+- **`delays`** - Delays between retry attempts (in seconds). Default: `Repeat(5)` (infinite retries every 5 seconds).
+- **`exc_filter`** - Exception types or callable to filter retriable exceptions. Default: `(asyncio.TimeoutError, ConnectionError, aiormq.exceptions.AMQPConnectionError)`.
+
+### Repeat
+
+Represents a constant delay between retries:
+
+- `Repeat(5)` - retry indefinitely every 5 seconds.
 
 ## Spec Classes
 
@@ -147,6 +192,19 @@ The default exchange (empty string name):
 from rmqaio import DefaultExchangeSpec
 
 spec = DefaultExchangeSpec()
+```
+
+### DefaultExchange
+
+Shortcut wrapper for publishing to the default exchange:
+
+```python
+from rmqaio import DefaultExchange, Ops
+
+ops = Ops(conn)
+exchange = DefaultExchange(ops)
+
+await exchange.publish(data=b"Hello", routing_key="my.queue")
 ```
 
 ### ExchangeSpec
@@ -183,7 +241,7 @@ spec = QueueSpec(
     name="my-queue",
     durable=True,
     arguments=QueueArgs(
-        queue_type="quorum",
+        queue_type="quorum",  # default: "classic"
         dead_letter_exchange="dlx",
         message_ttl=60000,
         max_length=1000,
@@ -232,6 +290,16 @@ spec = ConsumerSpec(
 )
 ```
 
+### Consumer
+
+Returned by `consume()` methods:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `spec` | `ConsumerSpec` | Consumer specification used to create this consumer |
+| `consumer_tag` | `str` | Consumer tag assigned by the broker |
+| `channel` | `AbstractChannel` | AMQP channel for this consumer |
+
 ## Exchange Operations
 
 ```python
@@ -242,13 +310,20 @@ ops = Ops(conn)
 spec = ExchangeSpec(name="orders", type='topic', durable=True)
 exchange = Exchange(spec, ops)
 
-await exchange.declare()
+await exchange.declare(restore=True, force=False)
 
 await exchange.publish(
     data=b"Hello",
     routing_key="order.created",
     properties={"delivery_mode": 2},
+    mandatory=False,
 )
+
+await exchange.check_exists()  # True if declared
+
+await exchange.bind(exchange="other-exchange", routing_key="orders.#", restore=True)
+
+await exchange.unbind(exchange="other-exchange", routing_key="orders.#")
 
 await exchange.delete()
 ```
@@ -263,13 +338,20 @@ ops = Ops(conn)
 spec = QueueSpec(name="notifications", durable=True)
 queue = Queue(spec, ops)
 
-await queue.declare()
+await queue.declare(restore=True)
 
-await queue.bind('exchange', routing_key="order.*")
+await queue.check_exists()  # True if declared
 
-await queue.consume(callback, auto_ack=False)
+await queue.bind(exchange, routing_key="order.*", restore=True)
 
-await queue.stop_consume(consumer_tag)
+await queue.unbind(exchange, routing_key="order.*")
+
+consumer = await queue.consume(callback, auto_ack=False, prefetch_count=10)
+
+queue.consumers  # list of active Consumer objects
+
+await queue.stop_consume(consumer_tag)  # stop specific consumer
+await queue.stop_consume()  # stop all consumers
 
 await queue.delete()
 ```
@@ -283,23 +365,38 @@ from rmqaio import Ops
 
 ops = Ops(conn, timeout=30)
 
-await ops.declare(exchange_spec)
-await ops.bind(bind_spec)
-await ops.publish("exchange", b"data", "routing.key")
-await ops.consume(consumer_spec)
+await ops.declare(exchange_spec, restore=True)
+await ops.bind(bind_spec, restore=True)
+await ops.publish("exchange", b"data", "routing.key", properties={"delivery_mode": 2})
+consumer = await ops.consume(consumer_spec, restore=True)
 ```
 
 ### Methods
 
-- `check_exists(spec)` - Check if exchange or queue exists
-- `declare(spec)` - Declare exchange or queue
-- `delete(spec)` - Delete exchange or queue
-- `bind(spec)` - Bind queue/exchange to exchange
-- `unbind(spec)` - Unbind from exchange
-- `publish(exchange, data, routing_key)` - Publish message
-- `consume(spec)` - Start consuming
-- `stop_consume(consumer_tag)` - Stop consuming
-- `ensure_topology()` - Restore all topology on reconnect
+**General:**
+
+- `check_exists(spec, timeout)` - Check if exchange or queue exists
+- `declare(spec, timeout, restore, force)` - Declare exchange or queue
+- `delete(spec, timeout)` - Delete exchange or queue
+- `bind(spec, timeout, restore)` - Bind queue/exchange to exchange
+- `unbind(spec, timeout)` - Unbind from exchange
+- `publish(exchange, data, routing_key, properties, mandatory, timeout)` - Publish message
+- `consume(spec, timeout, restore)` - Start consuming (returns `Consumer`)
+- `stop_consume(consumer_tag=None, timeout)` - Stop consuming. If `consumer_tag` is `None`, stops all consumers.
+- `apply_topology(topology, consume, restore, force)` - Apply entire topology declaration
+
+**Exchange-specific:**
+
+- `check_exchange_exists(name, timeout)` - Check if exchange exists by name
+- `exchange_declare(spec, timeout, restore, force)` - Declare an exchange
+- `exchange_delete(name, timeout)` - Delete an exchange by name
+
+**Queue-specific:**
+
+- `check_queue_exists(name, timeout)` - Check if queue exists by name
+- `get_queue(name, timeout)` - Get queue declare info from broker
+- `queue_declare(spec, timeout, restore, force)` - Declare a queue
+- `queue_delete(name, timeout)` - Delete a queue by name
 
 ## Topology and restore
 
@@ -310,7 +407,25 @@ await ops.declare(..., restore=True)
 await ops.bind(..., restore=True)
 await ops.consume(..., restore=True)
 ```
+
 On connection loss, the `Ops` handler automatically redeclares all resources.
+
+### apply_topology
+
+Apply an entire `Topology` at once:
+
+```python
+from rmqaio import Topology
+
+topology = Topology(
+    exchanges=[ExchangeSpec(name="my-exchange", ...)],
+    queues=[QueueSpec(name="my-queue", ...)],
+    bindings=[BindSpec(...)],
+    consumers=[ConsumerSpec(...)],
+)
+
+await ops.apply_topology(topology, consume=True, restore=True, force=False)
+```
 
 ## force Parameter
 
@@ -320,26 +435,11 @@ Force recreation when declaration parameters differ:
 await ops.declare(..., force=True)
 ```
 
-## Callbacks
+## Exceptions
 
-Subscribe to connection state changes:
-
-```python
-async def on_state_change(state_from, state_to):
-    print(f"Connection: {state_from} -> {state_to}")
-
-conn.set_callback("state_handler", on_state_change)
-await conn.remove_callback("state_handler")
-```
-
-### Connection States
-
-- `INITIAL` - Connection created
-- `CONNECTING` - Connecting to broker
-- `CONNECTED` - Connected and operational
-- `REFRESHING` - Refreshing connection
-- `CLOSING` - Closing connection
-- `CLOSED` - Connection closed
+- **`RmqAioError`** - Base exception for all library errors.
+- **`ConnectionInvalidStateError`** - Raised when an operation is attempted in an invalid connection state (e.g., reopening a closed connection).
+- **`OperationError`** - Raised when an operation is not allowed (e.g., deleting a read-only exchange or queue).
 
 ## Message Acknowledgment
 
@@ -364,16 +464,13 @@ async def callback(channel, msg):
 await queue.consume(callback, auto_ack=False)
 ```
 
-## Graceful Shutdown
+## Type Aliases
 
-```python
-await conn.close()
-```
-
-Or use context manager:
-
-```python
-async with Connection("amqp://localhost") as conn:
-    ops = Ops(conn)
-    # work with ops
-```
+| Alias | Value |
+|-------|-------|
+| `Number` | `int \| float` |
+| `ExchangeType` | `Literal["direct", "fanout", "topic", "headers"]` |
+| `DelayedExchangeType` | `Literal["direct", "fanout", "topic", "headers"]` |
+| `QueueType` | `Literal["classic", "quorum", "stream"]` |
+| `QueueMode` | `Literal["default", "lazy"]` |
+| `OverflowPolicy` | `Literal["drop-head", "reject-publish", "reject-publish-dlx"]` |

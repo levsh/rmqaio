@@ -5,8 +5,8 @@
 msgid ""
 msgstr ""
 "Project-Id-Version: \n"
-"POT-Creation-Date: 2026-05-21 10:46+0300\n"
-"PO-Revision-Date: 2026-05-21 11:02+0300\n"
+"POT-Creation-Date: 2026-06-04 11:18+0300\n"
+"PO-Revision-Date: 2026-06-04 11:19+0300\n"
 "Last-Translator: \n"
 "Language-Team: \n"
 "Language: ru\n"
@@ -16,97 +16,90 @@ msgstr ""
 "Generated-By: pygettext.py 1.5\n"
 "X-Generator: Poedit 3.9\n"
 
-#: ../rmqaio/rmqaio.py:96
+#: ../rmqaio/rmqaio.py:110
 msgid "invalid value '{}' for environment variable {}"
 msgstr "недопустимое значение '{}' для переменной среды {}"
 
-#: ../rmqaio/rmqaio.py:262
+#: ../rmqaio/rmqaio.py:308
 msgid "%s (%s %s) retry(%s) in %s second(s)"
 msgstr "%s (%s %s) повтор(%s) через %s секунд(у)"
 
-#: ../rmqaio/rmqaio.py:479 ../rmqaio/rmqaio.py:504
+#: ../rmqaio/rmqaio.py:525 ../rmqaio/rmqaio.py:554
 msgid "invalid connection state"
 msgstr "%s недопустимое состояние подключения"
 
-#: ../rmqaio/rmqaio.py:565
+#: ../rmqaio/rmqaio.py:615
 msgid "%s refreshed"
 msgstr "%s обновлено"
 
-#: ../rmqaio/rmqaio.py:580
+#: ../rmqaio/rmqaio.py:630
 msgid "%s closed"
 msgstr "%s закрыто"
 
-#: ../rmqaio/rmqaio.py:646
-msgid "%s execute callback[name=%s] %s -> %s"
-msgstr "%s выполняю callback[name=%s] %s -> %s"
+#: ../rmqaio/rmqaio.py:696
+msgid "%s executing callback[name=%s] %s -> %s"
+msgstr "%s выполнение callback[name=%s] %s -> %s"
 
-#: ../rmqaio/rmqaio.py:655
+#: ../rmqaio/rmqaio.py:705
 msgid "%s callback[name=%s, callback=%s] error"
 msgstr "%s ошибка callback[name=%s, callback=%s]"
 
-#: ../rmqaio/rmqaio.py:671
+#: ../rmqaio/rmqaio.py:721
 msgid "%s connecting[timeout=%s]..."
-msgstr "%s подключаюсь[тайм-аут=%s]..."
+msgstr "%s подключение[тайм-аут=%s]..."
 
-#: ../rmqaio/rmqaio.py:693
+#: ../rmqaio/rmqaio.py:743
 msgid "%s connected"
 msgstr "%s подключено"
 
-#: ../rmqaio/rmqaio.py:714
+#: ../rmqaio/rmqaio.py:764
 msgid "%s refreshing"
 msgstr "%s обновление"
 
-#: ../rmqaio/rmqaio.py:716
+#: ../rmqaio/rmqaio.py:766
 msgid "%s connection lost"
 msgstr "%s соединение потеряно"
 
-#: ../rmqaio/rmqaio.py:737
+#: ../rmqaio/rmqaio.py:787
 msgid "%s %s %s"
 msgstr ""
 
-#: ../rmqaio/rmqaio.py:738
-msgid "%s reconnecting in %.1f seconds"
+#: ../rmqaio/rmqaio.py:788
+msgid "%s reconnect in %.1f seconds"
 msgstr "%s переподключение через %.1f секунд"
 
-#: ../rmqaio/rmqaio.py:1650 ../rmqaio/rmqaio.py:1746
-msgid "declare[restore=%s, force=%s] %s"
-msgstr "объявляю[restore=%s, force=%s] %s"
+#: ../rmqaio/rmqaio.py:1800 ../rmqaio/rmqaio.py:1913
+msgid "declaring[restore=%s, force=%s] %s"
+msgstr "объявление[restore=%s, force=%s] %s"
 
-#: ../rmqaio/rmqaio.py:1666 ../rmqaio/rmqaio.py:1763
-msgid "delete[on_error] %s"
-msgstr "удаляю[on_error] %s"
+#: ../rmqaio/rmqaio.py:1816 ../rmqaio/rmqaio.py:1930
+msgid "deleting[on_error] %s"
+msgstr "удаление[on_error] %s"
 
-#: ../rmqaio/rmqaio.py:1688
-msgid "delete exchange '%s'"
-msgstr "удаляю обменник '%s'"
+#: ../rmqaio/rmqaio.py:1838
+msgid "deleting exchange '%s'"
+msgstr "удаление обменника '%s'"
 
-#: ../rmqaio/rmqaio.py:1785
-msgid "delete queue '%s'"
-msgstr "удаляю очередь '%s'"
+#: ../rmqaio/rmqaio.py:1952
+msgid "deleting queue '%s'"
+msgstr "удаление очереди '%s'"
 
-#: ../rmqaio/rmqaio.py:1812
-msgid "bind[restore=%s] %s '%s' to exchange '%s' with routing_key '%s'"
-msgstr ""
-"привязываю[restore=%s] %s '%s' к обменнику '%s' с ключом маршрутизации '%s'"
+#: ../rmqaio/rmqaio.py:1979
+msgid "binding[restore=%s] %s '%s' to exchange '%s' with routing_key '%s'"
+msgstr "привязывание[restore=%s] %s '%s' к обменнику '%s' с ключом маршрутизации '%s'"
 
-#: ../rmqaio/rmqaio.py:1857
-msgid "unbind %s '%s' from exchange '%s' for routing_key '%s'"
-msgstr "отвязываю очередь '%s' от обменника '%s' для ключа маршрутизации '%s'"
+#: ../rmqaio/rmqaio.py:2024
+msgid "unbinding %s '%s' from exchange '%s' for routing_key '%s'"
+msgstr "отвязывание очереди '%s' от обменника '%s' для ключа маршрутизации '%s'"
 
-#: ../rmqaio/rmqaio.py:1914
-msgid "exchange[name='%s'] %s channel[%s] publish[routing_key='%s'] %s"
-msgstr "обменник[name='%s'] канал[%s] публикую[routing_key='%s'] %s"
+#: ../rmqaio/rmqaio.py:2081
+msgid "exchange[name='%s'] %s channel[%s] publishing[routing_key='%s'] %s"
+msgstr "обменник[name='%s'] канал[%s] публикация[routing_key='%s'] %s"
 
-#: ../rmqaio/rmqaio.py:1981
-msgid "consume[restore=%s] %s"
-msgstr "слушаю[restore=%s] %s"
+#: ../rmqaio/rmqaio.py:2148
+msgid "consuming[restore=%s] %s"
+msgstr "прослушивание[restore=%s] %s"
 
-#: ../rmqaio/rmqaio.py:2014
-msgid "stop consume %s"
-msgstr "перестаю слушать %s"
-
-#~ msgid "%s connection error"
-#~ msgstr "%s ошибка подключения"
-
-#~ msgid "consume %s"
-#~ msgstr "слушаю %s"
+#: ../rmqaio/rmqaio.py:2181
+msgid "stop consuming %s"
+msgstr "остановка прослушивания %s"
