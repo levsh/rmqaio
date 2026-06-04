@@ -49,6 +49,7 @@ callback_logger = logging.getLogger("rmqaio.callback")
 
 
 BasicProperties = aiormq.spec.Basic.Properties
+QueueDeclareOk = aiormq.spec.Queue.DeclareOk
 
 Number = int | float
 """Numeric type alias for integers or floats."""
@@ -1868,7 +1869,7 @@ class Ops:
         except aiormq.ChannelNotFoundEntity:
             return False
 
-    async def get_queue(self, name: str, timeout: Number | None = None):
+    async def get_queue(self, name: str, timeout: Number | None = None) -> QueueDeclareOk:
         """
         Get queue declare info.
 
