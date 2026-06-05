@@ -24,6 +24,13 @@ class ContainerExecutor:
         self.client = docker.from_env()
         self.kwds = {"detach": True}
 
+    def dump_logs(self, container):
+        try:
+            container.reload()
+            return container.logs().decode()
+        except Exception as e:
+            return f"failed to read logs: {e}"
+
     @contextmanager
     def create(self, image, **kwds):
         container_kwds = self.kwds.copy()
@@ -31,12 +38,19 @@ class ContainerExecutor:
         container = self.client.containers.create(image, **container_kwds)
         try:
             yield container
-        except Exception as e:
-            print(container.logs().decode())
-            raise e
+        except Exception:
+            print("=== CONTAINER LOGS ===")
+            print(self.dump_logs(container))
+            raise
         finally:
-            container.stop()
-            container.remove(v=True)
+            try:
+                container.stop(timeout=10)
+            except Exception:
+                pass
+            try:
+                container.remove(force=True, v=True)
+            except Exception:
+                pass
 
     @contextmanager
     def run(self, image, **kwds):
@@ -44,29 +58,44 @@ class ContainerExecutor:
             container.start()
             yield container
 
+    def wait_healthy(self, container, timeout=60):
+        start = time.monotonic()
+
+        while time.monotonic() - start < timeout:
+            container.reload()
+
+            status = container.status
+            health = container.attrs.get("State", {}).get("Health", {}).get("Status")
+
+            if status == "running" and (health in (None, "healthy")):
+                return container
+
+            if status == "exited":
+                print("=== CONTAINER LOGS (EXITED EARLY) ===")
+                print(self.dump_logs(container))
+                break
+
+            time.sleep(1)
+
+        raise RuntimeError(self.dump_logs(container))
+
     @contextmanager
     def run_wait_up(self, image, **kwds):
         with self.run(image, **kwds) as container:
-            tend = time.monotonic() + 30
-            while (container.status != "running" or container.health != "healthy") and time.monotonic() < tend:
-                time.sleep(0.5)
-                container.reload()
-            container.reload()
-            if container.status != "running" or container.health != "healthy":
-                print()
-                print(container.logs().decode())
-                print(container.status)
-                print(container.health)
-                print()
-                raise Exception(f"container '{container.name}' error")
+            container = self.wait_healthy(container)
             yield container
 
     @contextmanager
     def run_wait_exit(self, image, **kwds):
         with self.run(image, **kwds) as container:
-            container.reload()
-            container.wait()
-            yield container
+            try:
+                yield container
+            except Exception:
+                print("=== CONTAINER LOGS ===")
+                print(self.dump_logs(container))
+                raise
+            finally:
+                container.wait()
 
 
 RETRIES = 10
@@ -79,9 +108,9 @@ def retry(fn):
         for attempt in range(1, attempts + 1):
             try:
                 return await fn(*args, **kwds)
-            except Exception as e:
+            except Exception:
                 if attempt >= attempts:
-                    raise e
+                    raise
                 await asyncio.sleep(1)
 
     return wrapper

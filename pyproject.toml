@@ -53,6 +53,7 @@ src_paths = ["."]
 profile = "black"
 
 [tool.pytest.ini_options]
+asyncio_mode = "auto"
 markers = [
     "integration: tests that require external services like Docker",
 ]

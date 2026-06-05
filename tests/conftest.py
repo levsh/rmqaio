@@ -56,9 +56,13 @@ def rabbitmq(container_executor):
         ports={"5672": "5672", "15672": "15672"},
         healthcheck={
             "test": ["CMD", "rabbitmq-diagnostics", "-q", "ping"],
-            "interval": 10**9,
-            "timeout": 10**9,
-            "retries": 60,
+            "interval": 2_000_000_000,  # 2s
+            "timeout": 1_000_000_000,  # 1s
+            "retries": 30,
+        },
+        environment={
+            "RABBITMQ_DEFAULT_USER": "guest",
+            "RABBITMQ_DEFAULT_PASS": "guest",
         },
     ) as container:
         ip = utils.get_ip(container)
@@ -76,13 +80,15 @@ def rabbitmq_tls(container_executor):
         },
         ports={"5671": "5671", "15671": "15671"},
         environment={
+            "RABBITMQ_DEFAULT_USER": "guest",
+            "RABBITMQ_DEFAULT_PASS": "guest",
             "RABBITMQ_CONFIG_FILE": "/etc/rabbitmq/configs/rabbitmq.conf",
         },
         healthcheck={
             "test": ["CMD", "rabbitmq-diagnostics", "-q", "ping"],
-            "interval": 10**9,
-            "timeout": 10**9,
-            "retries": 60,
+            "interval": 2_000_000_000,  # 2s
+            "timeout": 1_000_000_000,  # 1s
+            "retries": 30,
         },
     ) as container:
         ip = utils.get_ip(container)
@@ -96,8 +102,8 @@ def api(rabbitmq):
 
 
 @pytest.fixture
-def mock_aiormq():
-    event_loop = asyncio.get_event_loop()
+async def mock_aiormq():
+    event_loop = asyncio.get_running_loop()
     conn = MagicMock()
     conn.connect = AsyncMock()
     conn.closing = event_loop.create_future()

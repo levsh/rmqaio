@@ -8,7 +8,7 @@ from asyncio import FIRST_COMPLETED, CancelledError, Lock, create_task, gather, 
 from collections.abc import Hashable, MutableSequence
 from contextlib import suppress
 from dataclasses import dataclass, field
-from enum import StrEnum
+from enum import Enum
 from functools import wraps
 from os import environ
 from pathlib import Path
@@ -346,7 +346,7 @@ async def _wait_first_and_cancel_pending(
     return done, pending
 
 
-class ConnectionState(StrEnum):
+class ConnectionState(str, Enum):
     """Enum for representing the state of a connection."""
 
     INITIAL = "initial"
