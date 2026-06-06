@@ -5,7 +5,7 @@
 msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
-"POT-Creation-Date: 2026-06-04 11:18+0300\n"
+"POT-Creation-Date: 2026-06-06 17:35+0300\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -15,91 +15,132 @@ msgstr ""
 "Generated-By: pygettext.py 1.5\n"
 
 
-#: ../rmqaio/rmqaio.py:110
+#: ../rmqaio/rmqaio.py:111
 msgid "invalid value '{}' for environment variable {}"
 msgstr ""
 
-#: ../rmqaio/rmqaio.py:308
+#: ../rmqaio/rmqaio.py:309
 msgid "%s (%s %s) retry(%s) in %s second(s)"
 msgstr ""
 
-#: ../rmqaio/rmqaio.py:525 ../rmqaio/rmqaio.py:554
+#: ../rmqaio/rmqaio.py:509
 msgid "invalid connection state {}"
 msgstr ""
 
-#: ../rmqaio/rmqaio.py:615
+#: ../rmqaio/rmqaio.py:560 ../rmqaio/rmqaio.py:962
+msgid "can not reopen closed connection"
+msgstr ""
+
+#: ../rmqaio/rmqaio.py:573
+msgid "can not refresh closed connection"
+msgstr ""
+
+#: ../rmqaio/rmqaio.py:580
 msgid "%s refreshed"
 msgstr ""
 
-#: ../rmqaio/rmqaio.py:630
+#: ../rmqaio/rmqaio.py:594
 msgid "%s closed"
 msgstr ""
 
-#: ../rmqaio/rmqaio.py:696
+#: ../rmqaio/rmqaio.py:677
 msgid "%s executing callback[name=%s] %s -> %s"
 msgstr ""
 
-#: ../rmqaio/rmqaio.py:705
+#: ../rmqaio/rmqaio.py:686
 msgid "%s callback[name=%s, callback=%s] error"
 msgstr ""
 
-#: ../rmqaio/rmqaio.py:721
+#: ../rmqaio/rmqaio.py:700
 msgid "%s connecting[timeout=%s]..."
 msgstr ""
 
-#: ../rmqaio/rmqaio.py:743
+#: ../rmqaio/rmqaio.py:727
 msgid "%s connected"
 msgstr ""
 
-#: ../rmqaio/rmqaio.py:764
-msgid "%s refreshing"
-msgstr ""
-
-#: ../rmqaio/rmqaio.py:766
-msgid "%s connection lost"
-msgstr ""
-
-#: ../rmqaio/rmqaio.py:787
+#: ../rmqaio/rmqaio.py:744
 msgid "%s %s %s"
 msgstr ""
 
-#: ../rmqaio/rmqaio.py:788
+#: ../rmqaio/rmqaio.py:745
 msgid "%s reconnect in %.1f seconds"
 msgstr ""
 
-#: ../rmqaio/rmqaio.py:1800 ../rmqaio/rmqaio.py:1913
+#: ../rmqaio/rmqaio.py:759
+msgid "%s refreshing"
+msgstr ""
+
+#: ../rmqaio/rmqaio.py:761
+msgid "%s connection lost"
+msgstr ""
+
+#: ../rmqaio/rmqaio.py:1165 ../rmqaio/rmqaio.py:1220
+msgid "use DefaultExchangeSpec for default exchange instead of name=''"
+msgstr ""
+
+#: ../rmqaio/rmqaio.py:1652
+msgid "connection lost during restore"
+msgstr ""
+
+#: ../rmqaio/rmqaio.py:1702
+msgid "applying topology[restore=%s] %s"
+msgstr ""
+
+#: ../rmqaio/rmqaio.py:1736 ../rmqaio/rmqaio.py:1761 ../rmqaio/rmqaio.py:1783
+#: ../rmqaio/rmqaio.py:2037 ../rmqaio/rmqaio.py:2081
+msgid "invalid spec type"
+msgstr ""
+
+#: ../rmqaio/rmqaio.py:1776
+msgid "can not delete read-only exchange"
+msgstr ""
+
+#: ../rmqaio/rmqaio.py:1780
+msgid "can not delete read-only queue"
+msgstr ""
+
+#: ../rmqaio/rmqaio.py:1826
+msgid "can not declare read-only exchange"
+msgstr ""
+
+#: ../rmqaio/rmqaio.py:1831 ../rmqaio/rmqaio.py:1944
 msgid "declaring[restore=%s, force=%s] %s"
 msgstr ""
 
-#: ../rmqaio/rmqaio.py:1816 ../rmqaio/rmqaio.py:1930
+#: ../rmqaio/rmqaio.py:1847 ../rmqaio/rmqaio.py:1961
 msgid "deleting[on_error] %s"
 msgstr ""
 
-#: ../rmqaio/rmqaio.py:1838
+#: ../rmqaio/rmqaio.py:1869
 msgid "deleting exchange '%s'"
 msgstr ""
 
-#: ../rmqaio/rmqaio.py:1952
+#: ../rmqaio/rmqaio.py:1939
+msgid "can not declare read-only queue"
+msgstr ""
+
+#: ../rmqaio/rmqaio.py:1983
 msgid "deleting queue '%s'"
 msgstr ""
 
-#: ../rmqaio/rmqaio.py:1979
+#: ../rmqaio/rmqaio.py:2010
 msgid "binding[restore=%s] %s '%s' to exchange '%s' with routing_key '%s'"
 msgstr ""
 
-#: ../rmqaio/rmqaio.py:2024
+#: ../rmqaio/rmqaio.py:2055
 msgid "unbinding %s '%s' from exchange '%s' for routing_key '%s'"
 msgstr ""
 
-#: ../rmqaio/rmqaio.py:2081
+#: ../rmqaio/rmqaio.py:2112
 msgid "exchange[name='%s'] %s channel[%s] publishing[routing_key='%s'] %s"
 msgstr ""
 
-#: ../rmqaio/rmqaio.py:2148
+#: ../rmqaio/rmqaio.py:2179
 msgid "consuming[restore=%s] %s"
 msgstr ""
 
-#: ../rmqaio/rmqaio.py:2181
+#: ../rmqaio/rmqaio.py:2212
 msgid "stop consuming %s"
 msgstr ""
 
