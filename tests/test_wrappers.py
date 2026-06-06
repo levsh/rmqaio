@@ -237,5 +237,5 @@ class TestQueue:
 
         await queue.consume(callback, restore=True)
         mock_ops.consume.assert_called_once()
-        call_kwargs = mock_ops.consume.call_args[1]
+        call_kwargs = mock_ops.consume.call_args.kwargs
         assert call_kwargs["restore"] is True

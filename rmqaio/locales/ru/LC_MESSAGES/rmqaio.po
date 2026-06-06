@@ -25,8 +25,8 @@ msgid "%s (%s %s) retry(%s) in %s second(s)"
 msgstr "%s (%s %s) повтор(%s) через %s секунд(у)"
 
 #: ../rmqaio/rmqaio.py:525 ../rmqaio/rmqaio.py:554
-msgid "invalid connection state"
-msgstr "%s недопустимое состояние подключения"
+msgid "invalid connection state {}"
+msgstr "недопустимое состояние подключения {}"
 
 #: ../rmqaio/rmqaio.py:615
 msgid "%s refreshed"

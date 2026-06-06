@@ -1,15 +1,18 @@
 import asyncio
+import gc
 import itertools
 
 from dataclasses import FrozenInstanceError
 from ssl import PROTOCOL_TLS_CLIENT, SSLContext
 from unittest import mock
+from unittest.mock import AsyncMock, MagicMock
 
 import aiormq
 import pytest
 
-from rmqaio import Config, Connection, ConnectionState, Repeat, RetryPolicy, SharedConnection
+from rmqaio import Config, Connection, ConnectionState, Ops, Repeat, RetryPolicy, SharedConnection
 from rmqaio.rmqaio import _as_int_or_none, _env_var_as_bool, _env_var_as_int
+from rmqaio.rmqaio import _ReentrantLock, retry
 
 
 class TestConfig:
@@ -143,8 +146,136 @@ class TestRepeat:
 
     def test_ne_with_non_Repeat(self):
         r = Repeat(5)
-        assert (r != 5) is True
-        assert (r != "test") is True
+        assert r != 5
+        assert r != "test"
+
+
+class TestReentrantLock:
+    @pytest.mark.asyncio
+    async def test_reentrant_acquire(self):
+        lock = _ReentrantLock()
+        async with lock:
+            assert lock._count == 1
+            async with lock:
+                assert lock._count == 2
+            assert lock._count == 1
+        assert lock._count == 0
+        assert lock._owner is None
+
+    @pytest.mark.asyncio
+    async def test_block_other_task(self):
+        lock = _ReentrantLock()
+        started = asyncio.Event()
+        blocked = asyncio.Event()
+
+        async def other():
+            started.set()
+            async with lock:
+                blocked.set()
+
+        async with lock:
+            started.clear()
+            task = asyncio.create_task(other())
+            await asyncio.wait_for(started.wait(), timeout=1)
+            assert not blocked.is_set()
+            assert lock._owner is not None
+        await asyncio.wait_for(blocked.wait(), timeout=1)
+        task.cancel()
+
+    @pytest.mark.asyncio
+    async def test_release_on_exception(self):
+        lock = _ReentrantLock()
+        with pytest.raises(RuntimeError):
+            async with lock:
+                assert lock._count == 1
+                raise RuntimeError()
+        assert lock._count == 0
+        assert lock._owner is None
+
+
+class TestRetry:
+    @pytest.mark.asyncio
+    async def test_success_no_retry(self):
+        call_count = 0
+
+        @retry(RetryPolicy(delays=[0]))
+        async def fn():
+            nonlocal call_count
+            call_count += 1
+            return "ok"
+
+        result = await fn()
+        assert result == "ok"
+        assert call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_retry_then_success(self):
+        call_count = 0
+
+        @retry(RetryPolicy(delays=[0, 0]))
+        async def fn():
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise ConnectionError("first fail")
+            return "ok"
+
+        result = await fn()
+        assert result == "ok"
+        assert call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_retry_exhausted(self):
+        call_count = 0
+
+        @retry(RetryPolicy(delays=[0]))
+        async def fn():
+            nonlocal call_count
+            call_count += 1
+            raise ConnectionError("always fail")
+
+        with pytest.raises(ConnectionError, match="always fail"):
+            await fn()
+        assert call_count == 2  # initial + 1 retry
+
+    @pytest.mark.asyncio
+    async def test_non_retryable_exception(self):
+        @retry(RetryPolicy(delays=[0]))
+        async def fn():
+            raise ValueError("not retryable")
+
+        with pytest.raises(ValueError, match="not retryable"):
+            await fn()
+
+    @pytest.mark.asyncio
+    async def test_on_error_callback(self):
+        on_error_called = asyncio.Event()
+
+        async def on_error(e):
+            on_error_called.set()
+
+        call_count = 0
+
+        @retry(RetryPolicy(delays=[0]), on_error=on_error)
+        async def fn():
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise ConnectionError("fail")
+            return "ok"
+
+        result = await fn()
+        assert result == "ok"
+        assert on_error_called.is_set()
+
+    @pytest.mark.asyncio
+    async def test_custom_msg(self):
+        @retry(RetryPolicy(delays=[0]), msg="custom message")
+        async def fn():
+            raise ConnectionError("fail")
+
+        with pytest.raises(ConnectionError):
+            await fn()
 
 
 class TestConnection:
@@ -180,7 +311,7 @@ class TestConnection:
 
     def test_connection_timeout_from_url(self):
         conn = Connection("amqp://admin@example.com?connection_timeout=30000")
-        assert conn._connect_timeout == 30.0
+        assert conn._connect_timeout == 30
 
     def test_connection_timeout_not_set(self):
         conn = Connection("amqp://admin@example.com")
@@ -234,46 +365,6 @@ class TestConnection:
                 await conn.open()
 
     @pytest.mark.asyncio
-    async def test_open_waiter_raises_background_exception(self):
-        conn = Connection("amqp://admin@example.com")
-        conn._state = ConnectionState.CONNECTING
-        conn._closed_event.clear()
-        conn._exc = RuntimeError("boom")
-
-        task = asyncio.create_task(conn.open())
-        await asyncio.sleep(0)
-        conn._closed_event.set()
-
-        with pytest.raises(RuntimeError, match="boom"):
-            await task
-
-    @pytest.mark.asyncio
-    async def test_open_waiter_raises_when_connection_was_closed(self):
-        conn = Connection("amqp://admin@example.com")
-        conn._state = ConnectionState.CONNECTING
-        conn._closed_event.clear()
-
-        task = asyncio.create_task(conn.open())
-        await asyncio.sleep(0)
-        conn._closed_event.set()
-
-        with pytest.raises(Exception, match="invalid connection state"):
-            await task
-
-    @pytest.mark.asyncio
-    async def test_open_waiter_returns_when_connection_becomes_connected(self):
-        conn = Connection("amqp://admin@example.com")
-        conn._state = ConnectionState.CONNECTING
-        conn._closed_event.clear()
-
-        task = asyncio.create_task(conn.open())
-        await asyncio.sleep(0)
-        conn._state = ConnectionState.CONNECTED
-        conn._connected_event.set()
-
-        await task
-
-    @pytest.mark.asyncio
     async def test_open_with_ssl_context(self, mock_aiormq):
         ssl_ctx = SSLContext(protocol=PROTOCOL_TLS_CLIENT)
 
@@ -302,6 +393,20 @@ class TestConnection:
         conn = Connection("amqp://admin@example.com")
         await conn.close()
         await conn.close()
+
+    @pytest.mark.asyncio
+    async def test_close_from_inside_loop_task_does_not_cancel_loop_task(self):
+        conn = Connection("amqp://admin@example.com")
+        conn._state = ConnectionState.CONNECTED
+        conn._loop_task = asyncio.current_task()
+        conn._conn = MagicMock()
+        conn._conn.is_closed = False
+        conn._conn.close = AsyncMock()
+
+        await conn._close()
+
+        assert conn._state == ConnectionState.CLOSING
+        conn._conn.close.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_new_channel(self, mock_aiormq):
@@ -338,6 +443,21 @@ class TestConnection:
 
         await conn.remove_callback("test")
         assert "test" not in conn._callbacks
+
+    @pytest.mark.asyncio
+    async def test_bound_method_callback_does_not_leak(self):
+        conn = Connection("amqp://admin@example.com")
+        ops = Ops(conn)
+
+        callback_name = f"on_connection_state_changed[{id(ops)}]"
+        assert callback_name in conn._callbacks
+
+        del ops
+        gc.collect()
+
+        await conn._execute_callbacks(ConnectionState.RECONNECTING, ConnectionState.CONNECTED)
+
+        assert callback_name not in conn._callbacks
 
 
 class TestSharedConnection:

@@ -145,6 +145,8 @@ def mock_channel():
 def mock_conn(mock_channel):
     conn = MagicMock()
     conn.set_callback = MagicMock()
+    conn.is_open = True
+    conn.is_closed = False
     conn.channel = AsyncMock(return_value=mock_channel)
     conn.new_channel = AsyncMock(return_value=mock_channel)
     return conn

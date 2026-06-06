@@ -189,7 +189,6 @@ class TestRMQaio:
         assert conn._conn is None
         assert conn._channel is None
         assert conn._loop_task is None
-        assert conn._connected_event.is_set() is False
         assert conn._closed_event.is_set() is True
 
     @pytest.mark.asyncio

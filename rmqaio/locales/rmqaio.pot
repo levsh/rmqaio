@@ -24,7 +24,7 @@ msgid "%s (%s %s) retry(%s) in %s second(s)"
 msgstr ""
 
 #: ../rmqaio/rmqaio.py:525 ../rmqaio/rmqaio.py:554
-msgid "invalid connection state"
+msgid "invalid connection state {}"
 msgstr ""
 
 #: ../rmqaio/rmqaio.py:615

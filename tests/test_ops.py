@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, MagicMock
 import aiormq
 import pytest
 
-from rmqaio import BindSpec, ConsumerSpec, ExchangeSpec, Ops, QueueSpec, Topology
+from rmqaio import BindSpec, ConnectionState, ConsumerSpec, ExchangeSpec, Ops, QueueSpec, Topology
 from rmqaio.rmqaio import OperationError
 
 
@@ -19,6 +19,7 @@ class TestOpsInit:
         assert ops._timeout is None
         assert ops._topology is not None
         assert ops._consumers == {}
+        assert ops._restore_task is None
 
     def test_init_with_timeout(self, mock_conn):
         ops = Ops(mock_conn, timeout=60)
@@ -144,6 +145,24 @@ class TestOpsExchangeDeclare:
         with pytest.raises(OperationError, match="can not declare read-only exchange"):
             await ops.exchange_declare(spec)
 
+    @pytest.mark.asyncio
+    async def test_exchange_declare_force_retry(self, ops, mock_channel):
+        mock_channel.exchange_declare = AsyncMock(
+            side_effect=[aiormq.ChannelPreconditionFailed("mismatch"), None]
+        )
+        mock_channel.exchange_delete = AsyncMock()
+        spec = ExchangeSpec(name="test")
+        await ops.exchange_declare(spec, force=True)
+        assert mock_channel.exchange_declare.call_count == 2
+        mock_channel.exchange_delete.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_exchange_declare_force_no_retry_on_success(self, ops, mock_channel):
+        spec = ExchangeSpec(name="test")
+        await ops.exchange_declare(spec, force=True)
+        mock_channel.exchange_declare.assert_called_once()
+        mock_channel.exchange_delete.assert_not_called()
+
 
 class TestOpsExchangeDelete:
     @pytest.mark.asyncio
@@ -186,6 +205,24 @@ class TestOpsQueueDeclare:
         spec = QueueSpec(kind="read-only", name="test_queue")
         with pytest.raises(OperationError, match="can not declare read-only queue"):
             await ops.queue_declare(spec)
+
+    @pytest.mark.asyncio
+    async def test_queue_declare_force_retry(self, ops, mock_channel):
+        mock_channel.queue_declare = AsyncMock(
+            side_effect=[aiormq.ChannelPreconditionFailed("mismatch"), None]
+        )
+        mock_channel.queue_delete = AsyncMock()
+        spec = QueueSpec(name="test")
+        await ops.queue_declare(spec, force=True)
+        assert mock_channel.queue_declare.call_count == 2
+        mock_channel.queue_delete.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_queue_declare_force_no_retry_on_success(self, ops, mock_channel):
+        spec = QueueSpec(name="test")
+        await ops.queue_declare(spec, force=True)
+        mock_channel.queue_declare.assert_called_once()
+        mock_channel.queue_delete.assert_not_called()
 
 
 class TestOpsQueueDelete:
@@ -394,3 +431,43 @@ class TestOpsApplyTopology:
 
         await ops.apply_topology(topology, consume=True)
         mock_channel.basic_consume.assert_called_once()
+
+
+class TestOpsRestoreTopology:
+    @pytest.mark.asyncio
+    async def test_restore_on_reconnect(self, ops, mock_channel):
+        spec = ExchangeSpec(name="test_exchange")
+        await ops.exchange_declare(spec, restore=True)
+        mock_channel.exchange_declare.reset_mock()
+
+        await ops._on_connection_state_changed(ConnectionState.RECONNECTING, ConnectionState.CONNECTED)
+
+        if ops._restore_task:
+            await ops._restore_task
+
+        mock_channel.exchange_declare.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_no_restore_on_initial_connect(self, ops, mock_channel):
+        spec = ExchangeSpec(name="test_exchange")
+        await ops.exchange_declare(spec, restore=True)
+        mock_channel.exchange_declare.reset_mock()
+
+        await ops._on_connection_state_changed(ConnectionState.CONNECTING, ConnectionState.CONNECTED)
+
+        mock_channel.exchange_declare.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_no_restore_on_disconnect(self, ops, mock_channel):
+        await ops._on_connection_state_changed(ConnectionState.CONNECTED, ConnectionState.CLOSING)
+
+        mock_channel.exchange_declare.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_callback_receives_state_transitions(self, mock_conn):
+        ops = Ops(mock_conn, timeout=30)
+        callback = mock_conn.set_callback.call_args[0][1]
+
+        await callback(ConnectionState.RECONNECTING, ConnectionState.CONNECTED)
+        await callback(ConnectionState.CONNECTING, ConnectionState.CONNECTED)
+        await callback(ConnectionState.CONNECTED, ConnectionState.CLOSING)

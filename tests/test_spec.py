@@ -9,6 +9,7 @@ from rmqaio import (
     DefaultExchangeSpec,
     DelayedExchangeArgs,
     DelayedExchangeSpec,
+    ExchangeArgs,
     ExchangeSpec,
     QueueArgs,
     QueueSpec,
@@ -151,6 +152,17 @@ class TestConsumerArgs:
         args = ConsumerArgs(cancel_on_ha_failover=True)
         assert args.to_dict()["x-cancel-on-ha-failover"] is True
 
+    def test_custom(self):
+        args = ConsumerArgs(custom={"x-custom-key": "value"})
+        assert args.to_dict()["x-custom-key"] == "value"
+
+    def test_all_args(self):
+        args = ConsumerArgs(priority=5, cancel_on_ha_failover=True, custom={"x-foo": "bar"})
+        result = args.to_dict()
+        assert result["x-priority"] == 5
+        assert result["x-cancel-on-ha-failover"] is True
+        assert result["x-foo"] == "bar"
+
 
 class TestConsumerSpec:
     def test_init(self):
@@ -187,6 +199,16 @@ class TestConsumerSpec:
         assert spec.auto_ack is False
         assert spec.exclusive is True
         assert spec.consumer_tag == "test_tag"
+
+
+class TestExchangeArgs:
+    def test_empty(self):
+        args = ExchangeArgs()
+        assert args.to_dict() == {}
+
+    def test_custom(self):
+        args = ExchangeArgs(custom={"x-foo": "bar"})
+        assert args.to_dict() == {"x-foo": "bar"}
 
 
 class TestBaseExchangeArgs:
@@ -272,6 +294,26 @@ class TestBaseQueueArgs:
         args = BaseQueueArgs(single_active_consumer=True)
         result = args.to_dict()
         assert result["x-single-active-consumer"] is True
+
+    def test_max_length_bytes(self):
+        args = BaseQueueArgs(max_length_bytes=65536)
+        result = args.to_dict()
+        assert result["x-max-length-bytes"] == 65536
+
+    def test_queue_mode(self):
+        args = BaseQueueArgs(queue_mode="lazy")
+        result = args.to_dict()
+        assert result["x-queue-mode"] == "lazy"
+
+    def test_delivery_limit(self):
+        args = BaseQueueArgs(delivery_limit=5)
+        result = args.to_dict()
+        assert result["x-delivery-limit"] == 5
+
+    def test_expires(self):
+        args = BaseQueueArgs(expires=3600000)
+        result = args.to_dict()
+        assert result["x-expires"] == 3600000
 
     def test_custom(self):
         args = BaseQueueArgs(custom={"x-custom": "value"})
