@@ -427,6 +427,22 @@ class TestConnection:
         await conn.close()
 
     @pytest.mark.asyncio
+    async def test_new_channel_with_timeout(self, mock_aiormq):
+        conn = Connection("amqp://admin@example.com")
+        with mock.patch.object(conn, "open", wraps=conn.open) as open_mock:
+            await conn.new_channel(timeout=42)
+            open_mock.assert_awaited_once_with(timeout=42)
+        await conn.close()
+
+    @pytest.mark.asyncio
+    async def test_channel_with_timeout(self, mock_aiormq):
+        conn = Connection("amqp://admin@example.com")
+        with mock.patch.object(conn, "open", wraps=conn.open) as open_mock:
+            await conn.channel(timeout=42)
+            open_mock.assert_awaited_once_with(timeout=42)
+        await conn.close()
+
+    @pytest.mark.asyncio
     async def test_callbacks(self):
         callback_invoked = asyncio.Event()
 
@@ -585,6 +601,23 @@ class TestSharedConnection:
 
         await conn1.close()
         await conn2.close()
+
+    @pytest.mark.asyncio
+    async def test_new_channel_passes_timeout(self, mock_aiormq):
+        conn = SharedConnection("amqp://admin@example.com")
+        with mock.patch.object(conn, "open", wraps=conn.open) as open_mock:
+            await conn.new_channel(timeout=42)
+            open_mock.assert_awaited_once_with(timeout=42)
+        await conn.close()
+
+    @pytest.mark.asyncio
+    async def test_channel_passes_timeout(self, mock_aiormq):
+        conn = SharedConnection("amqp://admin@example.com")
+        await conn.open()
+        with mock.patch.object(conn, "open", wraps=conn.open) as open_mock:
+            await conn.channel(timeout=42)
+            open_mock.assert_awaited_once_with(timeout=42)
+        await conn.close()
 
 
 class TestEnvVarFunctions:

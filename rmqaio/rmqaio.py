@@ -604,7 +604,7 @@ class Connection:
             A new RabbitMQ channel.
         """
         if not self.is_open:
-            await self.open()
+            await self.open(timeout=timeout)
         return await cast(aiormq.abc.AbstractConnection, self._conn).channel(timeout=timeout)
 
     async def channel(self, timeout: Number | None = None) -> aiormq.abc.AbstractChannel:
@@ -619,7 +619,7 @@ class Connection:
         """
         async with self._channel_lock:
             if self._channel is None or self._channel.is_closed:
-                await self.open()
+                await self.open(timeout=timeout)
                 self._channel = await cast(aiormq.abc.AbstractConnection, self._conn).channel(timeout=timeout)
             return self._channel
 
@@ -727,9 +727,6 @@ class Connection:
                 logger.info(_("%s connected"), self)
                 return
 
-            except asyncio.CancelledError:
-                raise
-
             except Exception as e:
                 self._exc = e
 
@@ -747,21 +744,17 @@ class Connection:
                 await sleep(delay)
 
     async def _monitor(self):
-        try:
-            while True:
-                done = (await wait([self._conn.closing], timeout=5, return_when=FIRST_COMPLETED))[0]
-                if done or (self._conn and self._conn.is_connection_was_stuck):
-                    break
+        while True:
+            done = (await wait([self._conn.closing], timeout=5, return_when=FIRST_COMPLETED))[0]
+            if done or (self._conn and self._conn.is_connection_was_stuck):
+                break
 
-            if self._state in [ConnectionState.CLOSING, ConnectionState.CLOSED]:
-                pass
-            elif self._state == ConnectionState.REFRESHING:
-                logger.info(_("%s refreshing"), self)
-            else:
-                logger.warning(_("%s connection lost"), self)
-
-        except asyncio.CancelledError:
-            raise
+        if self._state in [ConnectionState.CLOSING, ConnectionState.CLOSED]:
+            pass
+        elif self._state == ConnectionState.REFRESHING:
+            logger.info(_("%s refreshing"), self)
+        else:
+            logger.warning(_("%s connection lost"), self)
 
     async def _loop(self):
         try:
@@ -1003,7 +996,7 @@ class SharedConnection:
         Returns:
             A new RabbitMQ channel.
         """
-        await self.open()
+        await self.open(timeout=timeout)
         return await self._conn.new_channel(timeout=timeout)
 
     async def channel(self, timeout: Number | None = None) -> aiormq.abc.AbstractChannel:
@@ -1018,7 +1011,7 @@ class SharedConnection:
         """
         async with self._channel_lock:
             if self._channel is None or self._channel.is_closed:
-                await self.open()
+                await self.open(timeout=timeout)
                 self._channel = await self._conn.new_channel(timeout=timeout)
             return self._channel
 
