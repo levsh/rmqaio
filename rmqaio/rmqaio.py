@@ -4,7 +4,15 @@ import itertools
 import logging
 import weakref
 
-from asyncio import FIRST_COMPLETED, CancelledError, Lock, get_running_loop, sleep, wait, wait_for
+from asyncio import (
+    FIRST_COMPLETED,
+    CancelledError,
+    Lock,
+    get_running_loop,
+    sleep,
+    wait,
+    wait_for,
+)
 from collections.abc import Hashable, MutableSequence
 from contextlib import suppress
 from dataclasses import dataclass, field
@@ -33,7 +41,6 @@ from uuid import uuid4
 import aiormq
 import aiormq.exceptions
 import yarl
-
 
 gettext.bindtextdomain(
     "rmqaio",
@@ -969,6 +976,8 @@ class SharedConnection:
             timeout: Operation timeout in seconds.
         """
         async with self._lock:
+            if self._is_closed.is_set():
+                raise ConnectionInvalidStateError(_("can not reopen closed connection"))
             await self._conn.refresh(timeout=timeout)
 
     async def close(self, timeout: Number | None = None):
