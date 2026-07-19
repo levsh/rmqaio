@@ -2536,6 +2536,9 @@ class Queue:
 
 
 __all__ = [
+    # Loggers
+    "logger",
+    "callback_logger",
     # Type aliases
     "BasicProperties",
     "QueueDeclareOk",
