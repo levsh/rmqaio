@@ -1,4 +1,3 @@
-import asyncio
 import gettext
 import itertools
 import logging
@@ -7,7 +6,12 @@ import weakref
 from asyncio import (
     FIRST_COMPLETED,
     CancelledError,
+    Event,
+    Future,
     Lock,
+    Task,
+    create_task,
+    current_task,
     get_running_loop,
     sleep,
     wait,
@@ -159,15 +163,16 @@ class _ReentrantLock:
     """Reentrant asyncio lock. Same task can acquire it multiple times."""
 
     def __init__(self):
-        self._lock = asyncio.Lock()
-        self._owner: asyncio.Task | None = None
+        self._lock: Lock | None = None
+        self._owner: Task | None = None
         self._count = 0
 
     async def __aenter__(self):
-        task = asyncio.current_task()
+        task = current_task()
         if task is self._owner:
             self._count += 1
             return self
+        self._lock = self._lock or Lock()
         await self._lock.__aenter__()
         self._owner = task
         self._count = 1
@@ -241,7 +246,7 @@ class RetryPolicy:
 
     delays: Delay = field(default_factory=lambda: Repeat(5))
     exc_filter: tuple[type[Exception], ...] | Callable[[Exception], bool] = (
-        asyncio.TimeoutError,
+        TimeoutError,
         ConnectionError,
         aiormq.exceptions.AMQPConnectionError,
     )
@@ -435,10 +440,10 @@ class Connection:
         self._channel_lock = Lock()
         self._conn: aiormq.Connection | None = None
         self._channel: aiormq.abc.AbstractChannel | None = None
-        self._open_futures: set[asyncio.Future] = set()
-        self._refresh_futures: set[asyncio.Future] = set()
-        self._closed_event = asyncio.Event()
-        self._loop_task: asyncio.Task | None = None
+        self._open_futures: set[Future] = set()
+        self._refresh_futures: set[Future] = set()
+        self._closed_event = Event()
+        self._loop_task: Task | None = None
         self._exc: BaseException | None = None
         self._callbacks: dict[str, Callable[[ConnectionState, ConnectionState], Awaitable]] = {}
 
@@ -522,8 +527,8 @@ class Connection:
         try:
             if self._state == ConnectionState.INITIAL:
                 if not self._loop_task:
-                    self._loop_task = asyncio.create_task(self._loop())
-            await asyncio.wait_for(future, timeout=timeout)
+                    self._loop_task = create_task(self._loop())
+            await wait_for(future, timeout=timeout)
         finally:
             self._open_futures.discard(future)
 
@@ -534,21 +539,21 @@ class Connection:
         try:
             await self._set_state(ConnectionState.REFRESHING)
             await cast(aiormq.Connection, self._conn).close()
-            await asyncio.wait_for(future, timeout=timeout)
+            await wait_for(future, timeout=timeout)
         finally:
             self._refresh_futures.discard(future)
 
     async def _close(self, timeout: Number | None = None):
         await self._set_state(ConnectionState.CLOSING)
         if self._loop_task:
-            if asyncio.current_task() is self._loop_task:
+            if current_task() is self._loop_task:
                 if self._conn and not self._conn.is_closed:
                     await self._conn.close()
             else:
                 self._loop_task.cancel()
-        if self._loop_task and asyncio.current_task() is not self._loop_task:
+        if self._loop_task and current_task() is not self._loop_task:
             with suppress(CancelledError):
-                await asyncio.wait_for(self._loop_task, timeout)
+                await wait_for(self._loop_task, timeout)
 
     async def open(self, timeout: Number | None = None):
         """
@@ -773,7 +778,7 @@ class Connection:
 
                 await self._monitor()
 
-        except asyncio.CancelledError as e:
+        except CancelledError as e:
             self._exc = e
 
             if self._conn and not self._conn.is_closed:
@@ -888,8 +893,8 @@ class SharedConnection:
             self._conn = self._shared_item.conn
         self._channel_lock = Lock()
         self._channel: aiormq.abc.AbstractChannel | None = None
-        self._is_open = asyncio.Event()
-        self._is_closed = asyncio.Event()
+        self._is_open = Event()
+        self._is_closed = Event()
 
     def __str__(self):
         return f"{self.__class__.__name__}[{self._conn}]"
@@ -1615,7 +1620,7 @@ class Ops:
         self._timeout = timeout
         self._topology = Topology()
         self._consumers: dict[str, Consumer] = {}
-        self._restore_task: asyncio.Task | None = None
+        self._restore_task: Task | None = None
 
         self._conn.set_callback(
             f"on_connection_state_changed[{id(self)}]",
@@ -1635,13 +1640,13 @@ class Ops:
         elif state_to == ConnectionState.CONNECTED and state_from != ConnectionState.CONNECTING:
             if self._restore_task and not self._restore_task.done():
                 self._restore_task.cancel()
-            self._restore_task = asyncio.create_task(self._restore_topology())
+            self._restore_task = create_task(self._restore_topology())
 
     @retry(
         RetryPolicy(
             delays=Repeat(5),
             exc_filter=(
-                asyncio.TimeoutError,
+                TimeoutError,
                 ConnectionError,
                 aiormq.exceptions.AMQPConnectionError,
                 aiormq.exceptions.ChannelLockedResource,
