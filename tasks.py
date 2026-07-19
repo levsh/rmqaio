@@ -22,8 +22,8 @@ def ensure_images(c):
 def run_linters(c):
     """Run linters"""
 
-    cmd = "poetry run ruff check rmqaio"
-    c.run(cmd)
+    c.run("poetry run ruff check rmqaio")
+    c.run("poetry run mypy rmqaio")
 
 
 @task

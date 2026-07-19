@@ -19,10 +19,10 @@ packages = [{include = "rmqaio"}]
 [tool.poetry.dependencies]
 python = "^3.10"
 aiormq = ">=6.7.6"
-yarl = "*"
 
 [tool.poetry.group.dev.dependencies]
 ruff = "*"
+mypy = "*"
 
 [tool.poetry.group.test.dependencies]
 docker = "*"
@@ -51,6 +51,12 @@ lines_after_imports = 2
 lines_between_types = 1
 src_paths = ["."]
 profile = "black"
+
+[tool.mypy]
+python_version = "3.10"
+ignore_missing_imports = true
+show_error_codes = true
+disable_error_code = []
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

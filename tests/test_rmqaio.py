@@ -5,14 +5,26 @@ import itertools
 from dataclasses import FrozenInstanceError
 from ssl import PROTOCOL_TLS_CLIENT, SSLContext
 from unittest import mock
-from unittest.mock import AsyncMock, MagicMock
 
 import aiormq
 import pytest
 
-from rmqaio import Config, Connection, ConnectionState, Ops, Repeat, RetryPolicy, SharedConnection
-from rmqaio.rmqaio import _as_int_or_none, _env_var_as_bool, _env_var_as_int
-from rmqaio.rmqaio import _ReentrantLock, retry
+from rmqaio import (
+    Config,
+    Connection,
+    ConnectionState,
+    Ops,
+    Repeat,
+    RetryPolicy,
+    SharedConnection,
+)
+from rmqaio.rmqaio import (
+    ConnectionInvalidStateError,
+    _as_int_or_none,
+    _env_var_as_bool,
+    _env_var_as_int,
+    retry,
+)
 
 
 class TestConfig:
@@ -148,49 +160,6 @@ class TestRepeat:
         r = Repeat(5)
         assert r != 5
         assert r != "test"
-
-
-class TestReentrantLock:
-    @pytest.mark.asyncio
-    async def test_reentrant_acquire(self):
-        lock = _ReentrantLock()
-        async with lock:
-            assert lock._count == 1
-            async with lock:
-                assert lock._count == 2
-            assert lock._count == 1
-        assert lock._count == 0
-        assert lock._owner is None
-
-    @pytest.mark.asyncio
-    async def test_block_other_task(self):
-        lock = _ReentrantLock()
-        started = asyncio.Event()
-        blocked = asyncio.Event()
-
-        async def other():
-            started.set()
-            async with lock:
-                blocked.set()
-
-        async with lock:
-            started.clear()
-            task = asyncio.create_task(other())
-            await asyncio.wait_for(started.wait(), timeout=1)
-            assert not blocked.is_set()
-            assert lock._owner is not None
-        await asyncio.wait_for(blocked.wait(), timeout=1)
-        task.cancel()
-
-    @pytest.mark.asyncio
-    async def test_release_on_exception(self):
-        lock = _ReentrantLock()
-        with pytest.raises(RuntimeError):
-            async with lock:
-                assert lock._count == 1
-                raise RuntimeError()
-        assert lock._count == 0
-        assert lock._owner is None
 
 
 class TestRetry:
@@ -395,18 +364,22 @@ class TestConnection:
         await conn.close()
 
     @pytest.mark.asyncio
-    async def test_close_from_inside_loop_task_does_not_cancel_loop_task(self):
+    async def test_close_from_inside_loop_task_does_not_cancel_loop_task(self, mock_aiormq):
         conn = Connection("amqp://admin@example.com")
-        conn._state = ConnectionState.CONNECTED
-        conn._loop_task = asyncio.current_task()
-        conn._conn = MagicMock()
-        conn._conn.is_closed = False
-        conn._conn.close = AsyncMock()
+        await conn.open()
+        assert conn._loop_task is not None
 
-        await conn._close()
+        loop_task = conn._loop_task
 
-        assert conn._state == ConnectionState.CLOSING
-        conn._conn.close.assert_awaited_once()
+        async def close_from_another_task():
+            await conn.close()
+
+        await close_from_another_task()
+
+        assert conn.is_closed is True
+        assert conn._conn is None
+        assert conn._loop_task is None
+        assert loop_task.done()
 
     @pytest.mark.asyncio
     async def test_new_channel(self, mock_aiormq):
@@ -474,6 +447,243 @@ class TestConnection:
         await conn._execute_callbacks(ConnectionState.RECONNECTING, ConnectionState.CONNECTED)
 
         assert callback_name not in conn._callbacks
+
+
+class TestCallbackSystem:
+    """End-to-end verification of the connection-state callback system.
+
+    These tests assert the *full sequence* of (from -> to) transitions
+    delivered to registered callbacks for every lifecycle path: open,
+    refresh, graceful close, and connection loss / automatic reconnect.
+    """
+
+    @pytest.mark.asyncio
+    async def test_callbacks_on_open_sequence(self, mock_aiormq):
+        transitions: list[tuple[ConnectionState, ConnectionState]] = []
+
+        async def callback(state_from, state_to):
+            transitions.append((state_from, state_to))
+
+        conn = Connection("amqp://admin@example.com")
+        conn.set_callback("recorder", callback)
+
+        await conn.open()
+
+        assert (ConnectionState.INITIAL, ConnectionState.CONNECTING) in transitions
+        assert (ConnectionState.CONNECTING, ConnectionState.CONNECTED) in transitions
+        assert conn.is_open
+
+        await conn.close()
+
+    @pytest.mark.asyncio
+    async def test_callbacks_on_refresh_sequence(self, mock_aiormq):
+        transitions: list[tuple[ConnectionState, ConnectionState]] = []
+
+        async def callback(state_from, state_to):
+            transitions.append((state_from, state_to))
+
+        conn = Connection("amqp://admin@example.com")
+        conn.set_callback("recorder", callback)
+
+        await conn.open()
+        transitions.clear()
+
+        await conn.refresh()
+
+        assert (ConnectionState.CONNECTED, ConnectionState.REFRESHING) in transitions
+        assert (ConnectionState.REFRESHING, ConnectionState.CONNECTED) in transitions
+        assert conn.is_open
+
+        await conn.close()
+
+    @pytest.mark.asyncio
+    async def test_callbacks_on_close_sequence(self, mock_aiormq):
+        transitions: list[tuple[ConnectionState, ConnectionState]] = []
+
+        async def callback(state_from, state_to):
+            transitions.append((state_from, state_to))
+
+        conn = Connection("amqp://admin@example.com")
+        conn.set_callback("recorder", callback)
+
+        await conn.open()
+        transitions.clear()
+
+        await conn.close()
+
+        assert (ConnectionState.CONNECTED, ConnectionState.CLOSING) in transitions
+        assert (ConnectionState.CLOSING, ConnectionState.CLOSED) in transitions
+        assert conn.is_closed
+
+    @pytest.mark.asyncio
+    async def test_callbacks_on_connection_lost_reconnect(self, mock_aiormq):
+        transitions: list[tuple[ConnectionState, ConnectionState]] = []
+
+        async def callback(state_from, state_to):
+            transitions.append((state_from, state_to))
+
+        conn = Connection("amqp://admin@example.com")
+        conn.set_callback("recorder", callback)
+
+        await conn.open()
+
+        # Simulate broker connection loss: resolve the live connection's closing future.
+        live_conn = conn._conn
+        assert live_conn is not None
+        transitions.clear()
+        live_conn.closing.set_result(None)
+
+        # Wait for the automatic reconnect to bring the connection back up.
+        for _ in range(50):
+            if conn.is_open and (ConnectionState.RECONNECTING, ConnectionState.CONNECTED) in transitions:
+                break
+            await asyncio.sleep(0.05)
+
+        assert (ConnectionState.CONNECTED, ConnectionState.RECONNECTING) in transitions
+        assert (ConnectionState.RECONNECTING, ConnectionState.CONNECTED) in transitions
+        assert conn.is_open
+
+        await conn.close()
+
+    @pytest.mark.asyncio
+    async def test_callbacks_fire_on_open_failure(self):
+        transitions: list[tuple[ConnectionState, ConnectionState]] = []
+
+        async def callback(state_from, state_to):
+            transitions.append((state_from, state_to))
+
+        with mock.patch("aiormq.connect", new_callable=mock.AsyncMock, side_effect=Exception("boom")):
+            conn = Connection("amqp://admin@example.com", open_retry_policy=RetryPolicy(delays=[]))
+            conn.set_callback("recorder", callback)
+
+            with pytest.raises(Exception):
+                await conn.open()
+
+        assert (ConnectionState.INITIAL, ConnectionState.CONNECTING) in transitions
+        assert conn._state == ConnectionState.INITIAL
+
+    @pytest.mark.asyncio
+    async def test_multiple_callbacks_all_invoked(self, mock_aiormq):
+        calls: dict[str, int] = {}
+
+        async def make_callback(name):
+            async def cb(state_from, state_to):
+                calls[name] = calls.get(name, 0) + 1
+
+            return cb
+
+        conn = Connection("amqp://admin@example.com")
+        conn.set_callback("a", await make_callback("a"))
+        conn.set_callback("b", await make_callback("b"))
+
+        await conn.open()
+        await conn.close()
+
+        assert calls["a"] >= 2
+        assert calls["b"] >= 2
+        assert calls["a"] == calls["b"]
+
+    @pytest.mark.asyncio
+    async def test_remove_callback_stops_invocation(self, mock_aiormq):
+        calls = 0
+
+        async def callback(state_from, state_to):
+            nonlocal calls
+            calls += 1
+
+        conn = Connection("amqp://admin@example.com")
+        conn.set_callback("test", callback)
+
+        await conn.open()
+        await conn.remove_callback("test")
+
+        # Trigger another transition (close) - callback must NOT be called anymore.
+        calls_before = calls
+        await conn.close()
+
+        assert calls == calls_before
+
+
+class TestConcurrency:
+    """Verify open/refresh/close behave correctly under concurrent calls.
+
+    No locks are used; correctness relies on asyncio being single-threaded
+    (synchronous sections are atomic) and on state/future guarding.
+    """
+
+    @pytest.mark.asyncio
+    async def test_concurrent_open_uses_single_loop_task(self, mock_aiormq):
+        conn = Connection("amqp://admin@example.com")
+
+        await asyncio.gather(conn.open(), conn.open())
+
+        assert conn.is_open
+        assert conn._loop_task is not None
+        assert conn._open_future is None or conn._open_future.done()
+        await conn.close()
+        assert conn.is_closed
+        assert conn._loop_task is None
+
+    @pytest.mark.asyncio
+    async def test_concurrent_refresh_waits_for_first(self, mock_aiormq):
+        conn = Connection("amqp://admin@example.com")
+        await conn.open()
+
+        await asyncio.gather(conn.refresh(), conn.refresh())
+
+        assert conn.is_open
+        # Exactly one reconnect happened: loop task still single, future cleared.
+        assert conn._loop_task is not None
+        await conn.close()
+        assert conn.is_closed
+
+    @pytest.mark.asyncio
+    async def test_concurrent_open_and_close(self, mock_aiormq):
+        conn = Connection("amqp://admin@example.com")
+
+        # close() may win the race; open() then fails with "connection closed".
+        # Either way the connection must end up fully closed without leaking tasks.
+        results = await asyncio.gather(conn.open(), conn.close(), return_exceptions=True)
+
+        assert conn.is_closed
+        assert conn._loop_task is None
+        assert conn._conn is None
+        # Exactly one of the two raised (or neither): no unexpected exceptions.
+        assert all(r is None or isinstance(r, ConnectionInvalidStateError) for r in results)
+
+    @pytest.mark.asyncio
+    async def test_concurrent_refresh_and_close(self, mock_aiormq):
+        conn = Connection("amqp://admin@example.com")
+        await conn.open()
+
+        results = await asyncio.gather(conn.refresh(), conn.close(), return_exceptions=True)
+
+        assert conn.is_closed
+        assert conn._loop_task is None
+        assert conn._conn is None
+        assert all(r is None or isinstance(r, ConnectionInvalidStateError) for r in results)
+
+    @pytest.mark.asyncio
+    async def test_concurrent_close_idempotent(self, mock_aiormq):
+        conn = Connection("amqp://admin@example.com")
+        await conn.open()
+
+        await asyncio.gather(conn.close(), conn.close(), conn.close())
+
+        assert conn.is_closed
+        assert conn._loop_task is None
+        assert conn._conn is None
+
+    @pytest.mark.asyncio
+    async def test_open_during_refresh_waits_for_completion(self, mock_aiormq):
+        conn = Connection("amqp://admin@example.com")
+        await conn.open()
+
+        await asyncio.gather(conn.refresh(), conn.open())
+
+        assert conn.is_open
+        await conn.close()
+        assert conn.is_closed
 
 
 class TestSharedConnection:

@@ -10,6 +10,7 @@ from asyncio import (
     Future,
     Lock,
     Task,
+    TimeoutError,
     create_task,
     current_task,
     get_running_loop,
@@ -18,7 +19,6 @@ from asyncio import (
     wait_for,
 )
 from collections.abc import Hashable, MutableSequence
-from contextlib import suppress
 from dataclasses import dataclass, field
 from enum import Enum
 from functools import wraps
@@ -29,6 +29,7 @@ from typing import (
     Any,
     Awaitable,
     Callable,
+    ClassVar,
     Coroutine,
     Generic,
     Iterable,
@@ -40,11 +41,11 @@ from typing import (
     cast,
     overload,
 )
+from urllib.parse import parse_qs, urlparse
 from uuid import uuid4
 
 import aiormq
 import aiormq.exceptions
-import yarl
 
 gettext.bindtextdomain(
     "rmqaio",
@@ -135,7 +136,7 @@ def _as_int_or_none(value: Any) -> int | None:
     try:
         return int(value)
     except (TypeError, ValueError):
-        return
+        return None
 
 
 @dataclass
@@ -157,32 +158,6 @@ class Config:
 
 
 config = Config()
-
-
-class _ReentrantLock:
-    """Reentrant asyncio lock. Same task can acquire it multiple times."""
-
-    def __init__(self):
-        self._lock: Lock | None = None
-        self._owner: Task | None = None
-        self._count = 0
-
-    async def __aenter__(self):
-        task = current_task()
-        if task is self._owner:
-            self._count += 1
-            return self
-        self._lock = self._lock or Lock()
-        await self._lock.__aenter__()
-        self._owner = task
-        self._count = 1
-        return self
-
-    async def __aexit__(self, *args):
-        self._count -= 1
-        if self._count == 0:
-            self._owner = None
-            await self._lock.__aexit__(*args)
 
 
 class Repeat:
@@ -436,13 +411,10 @@ class Connection:
 
         self._connect_timeout = self._extract_connect_timeout(url)
         self._state = ConnectionState.INITIAL
-        self._state_lock = _ReentrantLock()
         self._channel_lock = Lock()
         self._conn: aiormq.Connection | None = None
         self._channel: aiormq.abc.AbstractChannel | None = None
-        self._open_futures: set[Future] = set()
-        self._refresh_futures: set[Future] = set()
-        self._closed_event = Event()
+        self._open_future: Future | None = None
         self._loop_task: Task | None = None
         self._exc: BaseException | None = None
         self._callbacks: dict[str, Callable[[ConnectionState, ConnectionState], Awaitable]] = {}
@@ -457,16 +429,16 @@ class Connection:
         Returns:
             Connection timeout in seconds, or None if not specified.
         """
-        value = _as_int_or_none(yarl.URL(url).query.get("connection_timeout"))
-        if value is not None:
-            return value // 1000  # milliseconds to seconds
+        values = parse_qs(urlparse(url).query).get("connection_timeout")
+        if values:
+            return int(values[0]) // 1000  # milliseconds to seconds
         return None
 
     def __str__(self):
-        url = yarl.URL(self._url)
+        url = urlparse(self._url)
         if url.port:
-            return f"{self.__class__.__name__}[{url.host}:{url.port}][{self._id}]"
-        return f"{self.__class__.__name__}[{url.host}][{self._id}]"
+            return f"{self.__class__.__name__}[{url.hostname}:{url.port}][{self._id}]"
+        return f"{self.__class__.__name__}[{url.hostname}][{self._id}]"
 
     def __repr__(self):
         return self.__str__()
@@ -513,48 +485,6 @@ class Connection:
         """Whether connection is closed or in the process of closing."""
         return self._state in [ConnectionState.CLOSED, ConnectionState.CLOSING]
 
-    def _check_open_result(self):
-        if self._exc:
-            raise self._exc
-        if self._state == ConnectionState.CONNECTED:
-            return
-        raise ConnectionInvalidStateError(_("invalid connection state {}").format(self._state.value))
-
-    async def _open(self, timeout: Number | None = None):
-        loop = get_running_loop()
-        future = loop.create_future()
-        self._open_futures.add(future)
-        try:
-            if self._state == ConnectionState.INITIAL:
-                if not self._loop_task:
-                    self._loop_task = create_task(self._loop())
-            await wait_for(future, timeout=timeout)
-        finally:
-            self._open_futures.discard(future)
-
-    async def _refresh(self, timeout: Number | None = None):
-        loop = get_running_loop()
-        future = loop.create_future()
-        self._refresh_futures.add(future)
-        try:
-            await self._set_state(ConnectionState.REFRESHING)
-            await cast(aiormq.Connection, self._conn).close()
-            await wait_for(future, timeout=timeout)
-        finally:
-            self._refresh_futures.discard(future)
-
-    async def _close(self, timeout: Number | None = None):
-        await self._set_state(ConnectionState.CLOSING)
-        if self._loop_task:
-            if current_task() is self._loop_task:
-                if self._conn and not self._conn.is_closed:
-                    await self._conn.close()
-            else:
-                self._loop_task.cancel()
-        if self._loop_task and current_task() is not self._loop_task:
-            with suppress(CancelledError):
-                await wait_for(self._loop_task, timeout)
-
     async def open(self, timeout: Number | None = None):
         """
         Open connection to RabbitMQ.
@@ -571,8 +501,22 @@ class Connection:
         if self._state in [ConnectionState.CLOSING, ConnectionState.CLOSED]:
             raise ConnectionInvalidStateError(_("can not reopen closed connection"))
 
-        await self._open(timeout=timeout)
-        self._check_open_result()
+        if self._state == ConnectionState.INITIAL:
+            if self._loop_task is None:
+                await self._set_state(ConnectionState.CONNECTING)
+                if self._state in [ConnectionState.CLOSING, ConnectionState.CLOSED]:
+                    raise ConnectionInvalidStateError(_("connection was closed during opening"))
+
+                self._open_future = get_running_loop().create_future()
+                self._loop_task = create_task(self._loop())
+
+        if self._open_future:
+            await wait_for(self._open_future, timeout=timeout)
+
+        if self._state != ConnectionState.CONNECTED:
+            if self._state in [ConnectionState.CLOSING, ConnectionState.CLOSED]:
+                raise ConnectionInvalidStateError(_("connection was closed during opening"))
+            raise ConnectionInvalidStateError(_("invalid connection state {}").format(self._state.value))
 
     async def refresh(self, timeout: Number | None = None):
         """
@@ -584,12 +528,26 @@ class Connection:
         if self._state in [ConnectionState.CLOSING, ConnectionState.CLOSED]:
             raise ConnectionInvalidStateError(_("can not refresh closed connection"))
 
+        if self._state == ConnectionState.CONNECTED:
+            await self._set_state(ConnectionState.REFRESHING)
+            if self._state in [ConnectionState.CLOSING, ConnectionState.CLOSED]:
+                return
+
+            self._open_future = get_running_loop().create_future()
+
+            if self._conn and not self._conn.is_closed:
+                await self._conn.close()
+
+            if self._state in [ConnectionState.CLOSING, ConnectionState.CLOSED]:
+                raise ConnectionInvalidStateError(_("connection was closed during refreshing"))
+
+        if self._open_future:
+            await wait_for(self._open_future, timeout=timeout)
+
         if self._state != ConnectionState.CONNECTED:
-            return
-
-        await self._refresh(timeout=timeout)
-
-        logger.info(_("%s refreshed"), self)
+            if self._state in [ConnectionState.CLOSING, ConnectionState.CLOSED]:
+                raise ConnectionInvalidStateError(_("connection was closed during refreshing"))
+            raise ConnectionInvalidStateError(_("invalid connection state {}").format(self._state.value))
 
     async def close(self, timeout: Number | None = None):
         """
@@ -601,7 +559,18 @@ class Connection:
         if self._state in [ConnectionState.CLOSING, ConnectionState.CLOSED]:
             return
 
-        await self._close(timeout=timeout)
+        await self._set_state(ConnectionState.CLOSING)
+
+        if self._conn and not self._conn.is_closed:
+            await self._conn.close()
+
+        if self._loop_task is None:
+            await self._finalize()
+        elif current_task() is not self._loop_task:
+            try:
+                await wait_for(self._loop_task, timeout=timeout)
+            except TimeoutError:
+                await self._finalize()
 
         logger.info(_("%s closed"), self)
 
@@ -629,11 +598,12 @@ class Connection:
         Returns:
             An open RabbitMQ channel.
         """
-        async with self._channel_lock:
-            if self._channel is None or self._channel.is_closed:
-                await self.open(timeout=timeout)
-                self._channel = await cast(aiormq.abc.AbstractConnection, self._conn).channel(timeout=timeout)
-            return self._channel
+        if self._channel is None or self._channel.is_closed:
+            await self.open(timeout=timeout)
+            async with self._channel_lock:
+                if self._channel is None or self._channel.is_closed:
+                    self._channel = await cast(aiormq.abc.AbstractConnection, self._conn).channel(timeout=timeout)
+        return self._channel
 
     def set_callback(
         self,
@@ -698,13 +668,14 @@ class Connection:
                 callback_logger.exception(_("%s callback[name=%s, callback=%s] error"), self, name, callback)
 
     async def _set_state(self, state: ConnectionState):
-        async with self._state_lock:
-            state_from, state_to, self._state = self._state, state, state
-            if state_to != state_from:
-                await self._execute_callbacks(state_from, state_to)
+        state_from, state_to, self._state = self._state, state, state
+        if state_to != state_from:
+            await self._execute_callbacks(state_from, state_to)
 
     async def _connect(self):
-        retry_policy = self._open_retry_policy if self._state == ConnectionState.INITIAL else self._reopen_retry_policy
+        retry_policy = (
+            self._open_retry_policy if self._state == ConnectionState.CONNECTING else self._reopen_retry_policy
+        )
         delay_iter = iter(retry_policy.delays if retry_policy else [])
 
         while self._state not in [ConnectionState.CLOSING, ConnectionState.CLOSED]:
@@ -713,7 +684,9 @@ class Connection:
 
                 if self._state == ConnectionState.INITIAL:
                     await self._set_state(ConnectionState.CONNECTING)
-                else:
+                elif self._state == ConnectionState.REFRESHING:
+                    pass
+                elif self._state == ConnectionState.CONNECTED:
                     await self._set_state(ConnectionState.RECONNECTING)
 
                 self._conn = cast(
@@ -724,15 +697,13 @@ class Connection:
                     ),
                 )
 
-                self._channel = None
-                self._exc = None
+                if self._state in [ConnectionState.CLOSING, ConnectionState.CLOSED]:
+                    await self._conn.close()
+                    return
 
-                for f in list(self._open_futures):
-                    if not f.done():
-                        f.set_result(None)
-                for f in list(self._refresh_futures):
-                    if not f.done():
-                        f.set_result(None)
+                async with self._channel_lock:
+                    self._channel = None
+                self._exc = None
 
                 await self._set_state(ConnectionState.CONNECTED)
 
@@ -753,65 +724,83 @@ class Connection:
                 logger.warning(_("%s %s %s"), self, e.__class__, e)
                 logger.info(_("%s reconnect in %.1f seconds"), self, delay)
 
+                if self._state in [ConnectionState.CLOSING, ConnectionState.CLOSED]:
+                    return
+
                 await sleep(delay)
 
     async def _monitor(self):
-        while True:
-            done = (await wait([self._conn.closing], timeout=5, return_when=FIRST_COMPLETED))[0]
-            if done or (self._conn and self._conn.is_connection_was_stuck):
-                break
+        try:
+            while True:
+                done = (
+                    await wait(
+                        [self._conn.closing],
+                        timeout=5,
+                        return_when=FIRST_COMPLETED,
+                    )
+                )[0]
+                if done or (self._conn and self._conn.is_connection_was_stuck):
+                    break
 
-        if self._state in [ConnectionState.CLOSING, ConnectionState.CLOSED]:
-            pass
-        elif self._state == ConnectionState.REFRESHING:
-            logger.info(_("%s refreshing"), self)
-        else:
-            logger.warning(_("%s connection lost"), self)
+            if self._state in [ConnectionState.CLOSING, ConnectionState.CLOSED]:
+                pass
+            elif self._state == ConnectionState.REFRESHING:
+                logger.info(_("%s refreshing"), self)
+            else:
+                logger.warning(_("%s connection lost"), self)
+
+        except CancelledError:
+            raise
 
     async def _loop(self):
         try:
             while self._state not in [ConnectionState.CLOSING, ConnectionState.CLOSED]:
                 await self._connect()
 
-                if self._state is not ConnectionState.CONNECTED:
+                if self._state == ConnectionState.CONNECTED:
+                    if self._open_future and not self._open_future.done():
+                        self._open_future.set_result(None)
+
+                    await self._monitor()
+
+                    if (
+                        self._state not in [ConnectionState.CLOSING, ConnectionState.CLOSED]
+                        and self._state != ConnectionState.REFRESHING
+                    ):
+                        await self._set_state(ConnectionState.RECONNECTING)
+                elif self._state == ConnectionState.REFRESHING:
+                    if self._exc is not None:
+                        if self._open_future and not self._open_future.done():
+                            self._open_future.set_exception(self._exc)
+                        break
+                else:
                     break
 
-                await self._monitor()
-
-        except CancelledError as e:
-            self._exc = e
-
-            if self._conn and not self._conn.is_closed:
-                await self._conn.close()
-
-        except Exception as e:
-            self._exc = e
-            logger.exception(e)
-
         finally:
-            exc = self._exc
-            if isinstance(exc, CancelledError):
-                exc = None
-            exc = exc or ConnectionInvalidStateError("connection closed")
+            await self._finalize()
 
-            for f in list(self._open_futures):
-                if not f.done():
-                    f.set_exception(exc)
-            self._open_futures.clear()
-            for f in list(self._refresh_futures):
-                if not f.done():
-                    f.set_exception(exc)
-            self._refresh_futures.clear()
+    async def _finalize(self):
+        exc = self._exc
+        if isinstance(exc, CancelledError):
+            exc = None
+        exc = exc or ConnectionInvalidStateError("connection closed")
 
-            self._conn = None
+        if self._open_future and not self._open_future.done():
+            self._open_future.set_exception(exc)
+        self._open_future = None
+
+        if self._conn and not self._conn.is_closed:
+            await self._conn.close()
+
+        self._conn = None
+        async with self._channel_lock:
             self._channel = None
-            self._loop_task = None
+        self._loop_task = None
 
-            if self._state == ConnectionState.CLOSING:
-                self._closed_event.set()
-                await self._set_state(ConnectionState.CLOSED)
-            else:
-                await self._set_state(ConnectionState.INITIAL)
+        if self._state == ConnectionState.CLOSING:
+            await self._set_state(ConnectionState.CLOSED)
+        else:
+            self._state = ConnectionState.INITIAL
 
 
 @dataclass
@@ -851,7 +840,7 @@ class SharedConnection:
         >>> # conn1 and conn2 share the same underlying connection
     """
 
-    _shared = weakref.WeakValueDictionary()
+    _shared: ClassVar[weakref.WeakValueDictionary[tuple, _SharedItem]] = weakref.WeakValueDictionary()
 
     def __init__(
         self,
@@ -996,9 +985,11 @@ class SharedConnection:
             if self._is_closed.is_set():
                 return
             self._shared_item.refs = max(0, self._shared_item.refs - 1)
-            if self._shared_item.refs == 0:
-                await self._conn.close(timeout=timeout)
-            self._is_closed.set()
+            try:
+                if self._shared_item.refs == 0:
+                    await self._conn.close(timeout=timeout)
+            finally:
+                self._is_closed.set()
 
     async def new_channel(self, timeout: Number | None = None) -> aiormq.abc.AbstractChannel:
         """
@@ -1640,20 +1631,25 @@ class Ops:
         elif state_to == ConnectionState.CONNECTED and state_from != ConnectionState.CONNECTING:
             if self._restore_task and not self._restore_task.done():
                 self._restore_task.cancel()
+
+            async def restore():
+                try:
+                    await retry(
+                        RetryPolicy(
+                            delays=Repeat(5),
+                            exc_filter=(
+                                TimeoutError,
+                                ConnectionError,
+                                aiormq.exceptions.AMQPConnectionError,
+                            ),
+                        ),
+                        msg="restore topology",
+                    )(self._restore_topology)()
+                except Exception as e:
+                    logger.exception(e)
+
             self._restore_task = create_task(self._restore_topology())
 
-    @retry(
-        RetryPolicy(
-            delays=Repeat(5),
-            exc_filter=(
-                TimeoutError,
-                ConnectionError,
-                aiormq.exceptions.AMQPConnectionError,
-                aiormq.exceptions.ChannelLockedResource,
-            ),
-        ),
-        msg="restore topology",
-    )
     async def _restore_topology(self):
         if not self._conn.is_open or self._conn.is_closed:
             raise ConnectionInvalidStateError(_("connection lost during restore"))
@@ -2537,3 +2533,61 @@ class Queue:
         else:
             for consumer in self.consumers:
                 await self.ops.stop_consume(consumer.consumer_tag, timeout=timeout)
+
+
+__all__ = [
+    # Type aliases
+    "BasicProperties",
+    "QueueDeclareOk",
+    "Number",
+    # Exceptions
+    "RmqAioError",
+    "ConnectionInvalidStateError",
+    "OperationError",
+    # Config
+    "Config",
+    "config",
+    # Retry infrastructure
+    "Repeat",
+    "Delay",
+    "RetryPolicy",
+    "retry",
+    # Connection
+    "ConnectionState",
+    "ConnectionProtocol",
+    "Connection",
+    "SharedConnection",
+    # Exchange specs
+    "ExchangeType",
+    "Spec",
+    "DefaultExchangeSpec",
+    "BaseExchangeArgs",
+    "BaseExchangeSpec",
+    "ExchangeArgs",
+    "ExchangeSpec",
+    "DelayedExchangeType",
+    "DelayedExchangeArgs",
+    "DelayedExchangeSpec",
+    # Queue specs
+    "QueueType",
+    "OverflowPolicy",
+    "QueueMode",
+    "BaseQueueArgs",
+    "BaseQueueSpec",
+    "QueueArgs",
+    "QueueSpec",
+    # Binding & consuming specs
+    "BindSpec",
+    "ConsumerArgs",
+    "ConsumerSpec",
+    "Consumer",
+    # Structures
+    "UniqueList",
+    "Topology",
+    # Operations
+    "Ops",
+    # Wrappers
+    "DefaultExchange",
+    "Exchange",
+    "Queue",
+]

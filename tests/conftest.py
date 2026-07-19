@@ -104,20 +104,29 @@ def api(rabbitmq):
 @pytest.fixture
 async def mock_aiormq():
     event_loop = asyncio.get_running_loop()
-    conn = MagicMock()
-    conn.connect = AsyncMock()
-    conn.closing = event_loop.create_future()
-    conn.close = AsyncMock()
 
-    def make_mock_channel():
-        channel = AsyncMock()
-        channel.is_closed = False
-        return channel
+    def make_conn():
+        conn = MagicMock()
+        conn.connect = AsyncMock()
+        conn.is_closed = False
+        conn.closing = event_loop.create_future()
 
-    conn.channel = AsyncMock(side_effect=lambda *args, **kwargs: make_mock_channel())
+        async def _close():
+            conn.is_closed = True
+            if not conn.closing.done():
+                conn.closing.set_result(None)
 
-    with mock.patch("aiormq.connect") as m:
-        m.return_value = conn
+        conn.close = AsyncMock(side_effect=_close)
+
+        def make_mock_channel():
+            channel = AsyncMock()
+            channel.is_closed = False
+            return channel
+
+        conn.channel = AsyncMock(side_effect=lambda *args, **kwargs: make_mock_channel())
+        return conn
+
+    with mock.patch("aiormq.connect", new_callable=AsyncMock, side_effect=lambda *a, **k: make_conn()) as m:
         yield m
 
 
