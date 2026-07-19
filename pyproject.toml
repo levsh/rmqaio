@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "rmqaio"
-version = "0.19.0"
+version = "0.19.1"
 description = "Async RabbitMQ library with spec-based API, topology restore, and automatic reconnection"
 authors = ["Roman Koshel <roma.koshel@gmail.com>"]
 license = "MIT"
